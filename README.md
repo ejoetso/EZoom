@@ -113,6 +113,8 @@ Never commit a real `.env` file. It is excluded by `.gitignore` and `.dockerigno
 
 ## User workflow
 
+See the illustrated [visual user guide](docs/USER_GUIDE.md) or watch the [EZoom demo video](docs/EZoom-demo.mp4).
+
 ### Educator
 
 1. Open the EZoom landing page.
