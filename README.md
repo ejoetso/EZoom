@@ -4,6 +4,12 @@ EZoom is a self-hosted virtual classroom and collaboration platform for educator
 
 For commercial licensing, education deployments, integrations, or collaboration, email **eozoe2025@gmail.com**.
 
+## Copyright and usage
+
+Copyright © 2026 Ejoe Tso. All rights reserved.
+
+This repository is provided for evaluation and authorized deployment only. No license is granted to copy, redistribute, sell, sublicense, or create derivative commercial products without written permission from Ejoe Tso. Contact **eozoe2025@gmail.com** for commercial use, education licensing, deployment rights, or collaboration.
+
 ## Public trial account
 
 Anyone may evaluate EZoom locally using the trial educator account:

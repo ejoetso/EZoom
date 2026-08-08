@@ -2595,6 +2595,12 @@ export default function App() {
       )}
       <MicTestModal isOpen={isMicTestOpen} onClose={() => setIsMicTestOpen(false)} />
 
+      {currentScreen === "landing" && (
+        <footer className="pb-8 px-4 text-center text-[11px] text-slate-400">
+          © {new Date().getFullYear()} Ejoe Tso. All rights reserved.
+        </footer>
+      )}
+
     </div>
   );
 }
