@@ -235,8 +235,8 @@ if (superadminEmail && superadminPassword) {
   });
 }
 
-educatorAccounts.set((process.env.TRIAL_EMAIL || "user@ejoecast.com").toLowerCase(), {
-    password: process.env.TRIAL_PASSWORD || "user123!",
+educatorAccounts.set((process.env.TRIAL_EMAIL || "trial@ezoom.com").toLowerCase(), {
+    password: process.env.TRIAL_PASSWORD || "trial@123",
     accountType: "trial",
     maxDurationMinutes: Number(process.env.TRIAL_DURATION_MINUTES || 30),
 });

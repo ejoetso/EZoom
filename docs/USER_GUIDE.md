@@ -12,9 +12,19 @@ The landing page separates student entry from educator authentication. Commercia
 
 Use the public trial account:
 
-- Email: `user@ejoecast.com`
-- Password: `user123!`
+- Email: `trial@ezoom.com`
+- Password: `trial@123`
 - Meeting allowance: 30 minutes
+
+To use the trial login:
+
+1. Open EZoom and select **Educator Sign In**.
+2. Enter `trial@ezoom.com` in the email field.
+3. Enter `trial@123` in the password field.
+4. Select **Sign In**.
+5. Enter your display name and meeting details, then create a session.
+6. Check your camera and microphone in the lobby and select **Launch & Start Session**.
+7. Share the session code or QR code with students. The trial meeting ends automatically after 30 minutes.
 
 ![Educator trial sign-in](screenshots/02-educator-sign-in.png)
 
