@@ -21,7 +21,7 @@ export default function ProductLandingPage() {
             <a href="https://github.com/ejoetso/EZoom" target="_blank" rel="noreferrer" className="hidden items-center gap-2 rounded-xl border border-white/15 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-white/10 sm:flex">
               <Github className="h-4 w-4" /> GitHub
             </a>
-            <a href="/" className="flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400">
+            <a href="/app" className="flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400">
               Open EZoom <ArrowRight className="h-4 w-4" />
             </a>
           </nav>
@@ -39,7 +39,7 @@ export default function ProductLandingPage() {
                 EZoom is a self-hosted education and collaboration platform combining live camera and voice, screen broadcasting, whiteboards, classroom interaction, recording, and optional AI learning tools.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
-                <a href="/" className="flex items-center gap-2 rounded-2xl bg-cyan-500 px-6 py-3.5 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/20 hover:bg-cyan-400">
+                <a href="/app" className="flex items-center gap-2 rounded-2xl bg-cyan-500 px-6 py-3.5 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/20 hover:bg-cyan-400">
                   Try EZoom Free <PlayCircle className="h-5 w-5" />
                 </a>
                 <a href="https://github.com/ejoetso/EZoom" target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-2xl border border-white/20 bg-white/5 px-6 py-3.5 text-sm font-bold hover:bg-white/10">
@@ -114,7 +114,7 @@ export default function ProductLandingPage() {
                 <h2 className="mt-3 text-3xl font-black">Run a complete 30-minute EZoom meeting.</h2>
                 <p className="mt-3 text-sm font-medium text-cyan-950">Trial educator: <span className="font-mono font-black">user@ejoecast.com</span> · Password: <span className="font-mono font-black">user123!</span></p>
               </div>
-              <a href="/" className="flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-6 py-4 text-sm font-bold text-white hover:bg-slate-900">Start the trial <ArrowRight className="h-5 w-5" /></a>
+              <a href="/app" className="flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-6 py-4 text-sm font-bold text-white hover:bg-slate-900">Start the trial <ArrowRight className="h-5 w-5" /></a>
             </div>
           </div>
         </section>

@@ -59,7 +59,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000` for the public product introduction, or `http://localhost:3000/app` for student entry and educator login.
 
 Check container status and logs:
 
@@ -82,7 +82,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open `http://localhost:3000`. The development server listens on all interfaces, so another device on the same network can open `http://YOUR_LAN_IP:3000`.
+Open `http://localhost:3000` for the introduction or `http://localhost:3000/app` for the meeting application. The development server listens on all interfaces, so another device on the same network can open `http://YOUR_LAN_IP:3000`.
 
 Useful validation commands:
 

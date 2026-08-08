@@ -1577,9 +1577,9 @@ export default function App() {
     }
   ];
 
-  const directJoinUrl = `${joinBaseUrl}/?code=${encodeURIComponent(roomCode)}`;
+  const directJoinUrl = `${joinBaseUrl}/app?code=${encodeURIComponent(roomCode)}`;
 
-  if (window.location.pathname === "/about") {
+  if (window.location.pathname === "/" || window.location.pathname === "/about") {
     return <ProductLandingPage />;
   }
 
