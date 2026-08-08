@@ -1837,6 +1837,55 @@ export default function App() {
 
           </div>
 
+          <section className="w-full mt-14 space-y-8" aria-labelledby="demo-heading">
+            <div className="text-center space-y-2">
+              <span className="inline-flex rounded-full bg-cyan-50 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-700">Product Demo</span>
+              <h2 id="demo-heading" className="text-3xl font-bold text-slate-900">See EZoom in Action</h2>
+              <p className="mx-auto max-w-2xl text-sm leading-relaxed text-slate-500">
+                Watch the guided walkthrough, preview the educator and student experience, then try a free 30-minute meeting.
+              </p>
+            </div>
+
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-950 p-2 shadow-2xl">
+              <video
+                controls
+                preload="metadata"
+                poster="/demo/05-live-classroom.png"
+                className="aspect-video w-full rounded-2xl bg-black object-contain"
+              >
+                <source src="/demo/EZoom-demo.mp4" type="video/mp4" />
+                Your browser does not support the EZoom demo video.
+              </video>
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              {[
+                ["/demo/04-educator-lobby.png", "Educator device lobby"],
+                ["/demo/05-live-classroom.png", "Live educator classroom"],
+                ["/demo/06-student-join.png", "Student secure entry"],
+                ["/demo/07-student-classroom.png", "Student classroom experience"],
+              ].map(([src, label]) => (
+                <figure key={src} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
+                  <img src={src} alt={label} loading="lazy" className="aspect-video w-full object-cover object-top" />
+                  <figcaption className="border-t border-slate-100 px-4 py-3 text-xs font-semibold text-slate-700">{label}</figcaption>
+                </figure>
+              ))}
+            </div>
+
+            <div className="flex flex-col items-center justify-between gap-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-6 text-center sm:flex-row sm:text-left">
+              <div>
+                <h3 className="font-bold text-emerald-950">Free 30-minute educator trial</h3>
+                <p className="mt-1 text-xs text-emerald-800">
+                  Sign in with <span className="font-mono font-bold">user@ejoecast.com</span> and password <span className="font-mono font-bold">user123!</span>
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2">
+                <a href="/demo/EZoom-demo.mp4" download className="rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-800">Download Demo</a>
+                <a href="https://github.com/ejoetso/EZoom/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noreferrer" className="rounded-xl border border-emerald-300 bg-white px-4 py-2.5 text-xs font-bold text-emerald-800 transition-colors hover:bg-emerald-100">Open User Guide</a>
+              </div>
+            </div>
+          </section>
+
         </div>
       )}
 
