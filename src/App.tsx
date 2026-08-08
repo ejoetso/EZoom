@@ -1937,7 +1937,7 @@ export default function App() {
               <div>
                 <h3 className="font-bold text-emerald-950">Free 30-minute educator trial</h3>
                 <p className="mt-1 text-xs text-emerald-800">
-                  Sign in with <span className="font-mono font-bold">user@ejoecast.com</span> and password <span className="font-mono font-bold">user123!</span>
+                  Sign in with <span className="font-mono font-bold">trial@ezoom.com</span> and password <span className="font-mono font-bold">trial@123</span>
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2">

@@ -36,9 +36,21 @@ This repository is provided for evaluation and authorized deployment only. No li
 
 Anyone may evaluate EZoom locally using the trial educator account:
 
-- Email: `user@ejoecast.com`
-- Password: `user123!`
+- Email: `trial@ezoom.com`
+- Password: `trial@123`
 - Meeting duration: 30 minutes
+
+### How to use the trial educator login
+
+1. Open EZoom and select **Educator Sign In**.
+2. Sign in with `trial@ezoom.com` and password `trial@123`.
+3. Enter your educator display name, meeting title, and optional course name.
+4. Choose the waiting-room and chat settings, then create the session.
+5. Confirm the camera and microphone in the device lobby.
+6. Launch the meeting and share the four-digit session code or QR code with students.
+7. Students join from the landing page using their name, email, session code, and the answer to the displayed math question.
+
+The trial educator account is limited to 30 minutes per meeting.
 
 The 30-minute limit is enforced by the server and starts when the educator launches the meeting. Students do not need an account. They join with their name, email, four-digit session code, and the math security answer shown on the landing page.
 
@@ -135,8 +147,8 @@ Copy `.env.example` to `.env` and adjust these variables:
 | `GEMINI_API_KEY` | Optional Gemini API key for AI notes and quizzes | empty |
 | `SUPERADMIN_EMAIL` | Unlimited administrator login | required secret |
 | `SUPERADMIN_PASSWORD` | Unlimited administrator password | required secret |
-| `TRIAL_EMAIL` | Public trial educator login | `user@ejoecast.com` |
-| `TRIAL_PASSWORD` | Public trial educator password | `user123!` |
+| `TRIAL_EMAIL` | Public trial educator login | `trial@ezoom.com` |
+| `TRIAL_PASSWORD` | Public trial educator password | `trial@123` |
 | `TRIAL_DURATION_MINUTES` | Trial meeting duration | `30` |
 | `LICENSE_DATA_DIR` | Persistent activation state directory | `data` locally, `/app/data` in Docker |
 
