@@ -1599,12 +1599,14 @@ export default function App() {
         <div className="max-w-5xl mx-auto px-4 py-12 flex flex-col items-center justify-center min-h-[90vh]">
           
           <div className="text-center space-y-3.5 mb-10 max-w-2xl">
-            <div className="bg-slate-900 text-white w-14 h-14 rounded-2xl flex items-center justify-center mx-auto shadow-md">
-              <Monitor className="w-8 h-8 text-emerald-400 stroke-[1.5]" />
+            <div className="relative h-32 w-full overflow-hidden" aria-hidden="true">
+              <img
+                src="/ezoom-logo.png"
+                alt=""
+                className="absolute left-1/2 top-1/2 w-[700px] max-w-none -translate-x-1/2 -translate-y-1/2"
+              />
             </div>
-            <h1 className="text-4xl font-bold font-sans tracking-tight text-slate-900 sm:text-5xl">
-              EZoom
-            </h1>
+            <h1 className="sr-only">EZoom</h1>
             <p className="text-sm font-sans text-slate-500 leading-relaxed">
               Secure, low-latency screen-broadcasting and collaborative digital whiteboard built for modern educators, schools, and training organizations.
             </p>

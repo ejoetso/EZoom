@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/ezoom-logo.png" alt="EZoom" width="640" />
+</p>
+
 # EZoom
 
 EZoom is a self-hosted virtual classroom and collaboration platform for educators, students, schools, trainers, and online communities. It combines live classroom rooms, educator camera and microphone broadcasting, screen sharing, a synchronized whiteboard, chat, Q&A, polls, resources, QR joining, recording, and optional Gemini-powered learning tools.
