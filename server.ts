@@ -7,14 +7,80 @@ import dgram from "dgram";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import fs from "fs";
+import crypto from "crypto";
 
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 app.use(express.json({ limit: "10mb" }));
+
+const TRIAL_DAYS = 30;
+const TRIAL_KEY_HASHES = new Set([
+  "7bf1565369bc8dcb48ea5e19e5d70cb68a8619ab5200406fedd847b728d9d6eb", "b72f3066dbbc40fd66cf4f987496d33079d49c48e687633d93b2d08ad3cf31a6",
+  "433d06eb2fe3c3f15a4fb823047b45dcd6f2cfe20404417f954f45c41bb77297", "5b4bb13ff269770144a74d8df0b53e77b503c89d968b592c7a49c546ca8bb9d9",
+  "24c1c4b9b122744e414bac7e7fe20456604dea29ea5474270c9e18fda260d9c7", "205e1d0e7a3d1a03e27046d210c1c7952e20c58cd24b6a520a2d2e67b689ca27",
+  "b00a693bd00d7f0d8739f2b8f4e5178a42b62c8b67ac2190306a217040852781", "0301a757cf4ecb0aed0dd24cfcec728f6fb137122ac2de77bddc410ed7755147",
+  "9eebb5b8adfb0c5553e2bbe7487f69ad49a7e7fc59f024b20e58b8af62b250c7", "0375dd70ebbe67fb2db71c5ebb29c9a1ed69b43553c6e2d13e6bddaa0c312f28",
+  "42defee19bc7480a9c98d037dd31161cc6205faaa73eeed620ad6fd56cc78f2a", "ba5948283a410c1f2574f98f9cce643e3938314d6aa8a23d9fc92b43c7aaf3c8",
+  "3b8c7c82385f867f15ffa71735d60472351198cc4111aaad39d1eb8507f73edc", "563cafaa4d7b064008dcc288816694a591c8b1c8f42fbe21583d94daf11f4c8b",
+  "7cee47dea1e80aa8e7a0d6311f12ec47e1b52f8082ac7f375fe9aee1ad84afd6", "52939cea385cf159348a8dc3d9440696e1ea6d9aac5945a5c9b013c667b67dc4",
+  "860fb32c67f4c305421dff232571acf820699c0ea20e18356baad31c437ca82c", "4a6e280e1b22e03c7744db25be13e9c55d71cd8f95fc4f91d4455b364f13cc7f",
+  "d741093b9b3d7028b917713cf77003ca5e2b948d07fd3dc1130ea9143656710f", "1c61c2d2057c0e163f826176aaa310544ec6c4e9ec6e8b3d09c2e8758dc20560",
+  "2bbc4c66128107e17cfbf96afe489a8bca577d182b1b1ae386b2a83ea6b4e12a", "3e077ab37d78b16ef602c8b8a36718aa5f8c4f2e24e5526c5db44afc3feedcd6",
+  "749c711a0c22ebae9454e5b15dd6e91ed596f90960edcaec714ae595139cc965", "47e1d093a61f35ce94886b7f7fde9908f359ca9b608d30bcf8a91ea3e78aab4a",
+  "1bb3bdbd7355a3b88029f3d831ee83e55c926ef7ca0a47907056a7018c5506cc", "ef7a8fd89ad1771221e52c52950cbf1af4d52c8d740608f1e9025e44c5f9c00f",
+  "881e992b0506514fd8422d0d54ddbf7b639adb0d2dc17b163ce4860948ff77d9", "6661fd185c8d04065e640dc76c9a3ecb92708e3003af1b2e54621453d3bf82f2",
+  "e3fd851442ff5f4c45b86086bbf5791ec51833c7358298f00cdb4b878a1523d4", "9df8059854e6ef30cfc127c531d7060852733a746e8f0538fbc122b6a866181c",
+]);
+
+interface LicenseState { keyHash: string; activatedAt: string; expiresAt: string; lastCheckedAt: string; }
+const licenseDataDirectory = path.resolve(process.env.LICENSE_DATA_DIR || "data");
+const licenseStatePath = path.join(licenseDataDirectory, "license.json");
+
+function readLicenseState(): LicenseState | null {
+  try { return JSON.parse(fs.readFileSync(licenseStatePath, "utf8")); } catch { return null; }
+}
+
+function getLicenseStatus() {
+  const state = readLicenseState();
+  if (!state) return { active: false, status: "not_activated", trialDays: TRIAL_DAYS };
+  const now = Date.now();
+  const expiresAt = Date.parse(state.expiresAt);
+  const activatedAt = Date.parse(state.activatedAt);
+  const lastCheckedAt = Date.parse(state.lastCheckedAt);
+  const clockInvalid = !Number.isFinite(expiresAt) || !Number.isFinite(activatedAt) || now < activatedAt || (Number.isFinite(lastCheckedAt) && now + 300000 < lastCheckedAt);
+  if (!clockInvalid) {
+    state.lastCheckedAt = new Date(now).toISOString();
+    try { fs.mkdirSync(licenseDataDirectory, { recursive: true }); fs.writeFileSync(licenseStatePath, JSON.stringify(state, null, 2)); } catch {}
+  }
+  const active = !clockInvalid && now < expiresAt;
+  return { active, status: clockInvalid ? "clock_invalid" : active ? "active" : "expired", activatedAt: state.activatedAt, expiresAt: state.expiresAt, daysRemaining: active ? Math.max(1, Math.ceil((expiresAt - now) / 86400000)) : 0, trialDays: TRIAL_DAYS };
+}
+
+app.get("/api/license/status", (_req, res) => res.json(getLicenseStatus()));
+
+app.post("/api/license/activate", (req, res) => {
+  const existing = readLicenseState();
+  if (existing) return res.status(409).json({ error: "This installation has already been activated.", ...getLicenseStatus() });
+  const key = String(req.body.licenseKey || "").trim().toUpperCase();
+  const keyHash = crypto.createHash("sha256").update(key).digest("hex");
+  if (!/^EZTRIAL-(?:[A-F0-9]{6}-){3}[A-F0-9]{6}$/.test(key) || !TRIAL_KEY_HASHES.has(keyHash)) return res.status(400).json({ error: "Invalid EZoom trial licence key." });
+  const now = new Date();
+  const state: LicenseState = { keyHash, activatedAt: now.toISOString(), expiresAt: new Date(now.getTime() + TRIAL_DAYS * 86400000).toISOString(), lastCheckedAt: now.toISOString() };
+  fs.mkdirSync(licenseDataDirectory, { recursive: true });
+  fs.writeFileSync(licenseStatePath, JSON.stringify(state, null, 2), { mode: 0o600 });
+  res.json(getLicenseStatus());
+});
+
+function requireActiveLicense(_req: express.Request, res: express.Response, next: express.NextFunction) {
+  const status = getLicenseStatus();
+  if (!status.active) return res.status(402).json({ error: status.status === "expired" ? "The 30-day EZoom trial has expired." : "Activate this EZoom installation with a trial licence key.", license: status });
+  next();
+}
 
 function getLanAddress(): string | null {
   const candidates = Object.entries(os.networkInterfaces()).flatMap(([name, addresses]) =>
@@ -188,7 +254,7 @@ function generateJoinCode(): string {
   return code;
 }
 
-app.post("/api/educator/login", (req, res) => {
+app.post("/api/educator/login", requireActiveLicense, (req, res) => {
   const email = String(req.body.email || "").trim().toLowerCase();
   const account = educatorAccounts.get(email);
   if (!account || account.password !== req.body.password) {
@@ -200,7 +266,7 @@ app.post("/api/educator/login", (req, res) => {
 // REST API Endpoints
 
 // Create Classroom
-app.post("/api/classrooms", (req, res) => {
+app.post("/api/classrooms", requireActiveLicense, (req, res) => {
   const { title, courseName, educatorName, waitingRoom, chatEnabled, recording, email, password } = req.body;
   if (!title || !educatorName) {
     return res.status(400).json({ error: "Missing required fields" });

@@ -6,5 +6,7 @@ coverage/
 .aistudio/
 **/.aistudio/
 *.log
+data/
+trial-license-keys.txt
 .env*
 !.env.example

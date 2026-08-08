@@ -42,6 +42,14 @@ Anyone may evaluate EZoom locally using the trial educator account:
 
 The 30-minute limit is enforced by the server and starts when the educator launches the meeting. Students do not need an account. They join with their name, email, four-digit session code, and the math security answer shown on the landing page.
 
+## 30-day deployment trial activation
+
+A new local or Docker deployment must be activated with an authorised `EZTRIAL-...` licence key before the application is unlocked. The first successful activation creates `data/license.json` and begins an immutable 30-day evaluation period. The public trial educator account remains limited to 30 minutes per meeting during that period.
+
+Licence keys are distributed separately and are never committed to this public repository. For a trial key, self-hosted licence, cloud licence, or education-institute free licence, email **eozoe2025@gmail.com**.
+
+Docker Compose mounts `./data` at `/app/data`, so activation survives container rebuilds and restarts. Back up this directory with the deployment. Deleting or changing activation state does not extend a licence and may lock the installation; contact EZoom for assistance.
+
 Administrator credentials are intentionally excluded from source control and documentation. Set `SUPERADMIN_EMAIL` and `SUPERADMIN_PASSWORD` privately in the deployment environment.
 
 ## Capabilities
@@ -130,6 +138,7 @@ Copy `.env.example` to `.env` and adjust these variables:
 | `TRIAL_EMAIL` | Public trial educator login | `user@ejoecast.com` |
 | `TRIAL_PASSWORD` | Public trial educator password | `user123!` |
 | `TRIAL_DURATION_MINUTES` | Trial meeting duration | `30` |
+| `LICENSE_DATA_DIR` | Persistent activation state directory | `data` locally, `/app/data` in Docker |
 
 Never commit a real `.env` file. It is excluded by `.gitignore` and `.dockerignore`.
 

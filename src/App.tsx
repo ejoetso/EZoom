@@ -116,6 +116,38 @@ export default function App() {
   const [educatorAccountType, setEducatorAccountType] = useState<"superadmin" | "trial" | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [joinBaseUrl, setJoinBaseUrl] = useState(() => window.location.origin);
+  const [licenseStatus, setLicenseStatus] = useState<{ active: boolean; status: string; expiresAt?: string; daysRemaining?: number; trialDays?: number } | null>(null);
+  const [licenseKey, setLicenseKey] = useState("");
+  const [licenseError, setLicenseError] = useState<string | null>(null);
+  const [isActivatingLicense, setIsActivatingLicense] = useState(false);
+
+  const loadLicenseStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/license/status");
+      setLicenseStatus(await response.json());
+    } catch {
+      setLicenseStatus({ active: false, status: "unavailable" });
+    }
+  }, []);
+
+  useEffect(() => { loadLicenseStatus(); }, [loadLicenseStatus]);
+
+  const activateTrialLicense = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLicenseError(null);
+    setIsActivatingLicense(true);
+    try {
+      const response = await fetch("/api/license/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ licenseKey }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Licence activation failed.");
+      setLicenseStatus(data);
+      setLicenseKey("");
+    } catch (error: any) {
+      setLicenseError(error.message || "Licence activation failed.");
+    } finally {
+      setIsActivatingLicense(false);
+    }
+  };
 
   useEffect(() => {
     const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
@@ -1577,6 +1609,35 @@ export default function App() {
   ];
 
   const directJoinUrl = `${joinBaseUrl}/?code=${encodeURIComponent(roomCode)}`;
+
+  if (!licenseStatus) {
+    return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white"><RefreshCw className="w-7 h-7 animate-spin text-cyan-400" /></div>;
+  }
+
+  if (!licenseStatus.active) {
+    const isExpired = licenseStatus.status === "expired";
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-8 shadow-2xl">
+          <img src="/ezoom-logo.png" alt="EZoom" className="mx-auto mb-7 h-24 w-auto object-contain" />
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-500/10 text-cyan-300"><ShieldCheck className="h-7 w-7" /></div>
+          <h1 className="text-center text-2xl font-black">{isExpired ? "Your EZoom trial has expired" : "Activate your 30-day EZoom trial"}</h1>
+          <p className="mt-3 text-center text-sm leading-6 text-slate-400">{isExpired ? "Contact EZoom to continue with a self-hosted or cloud licence." : "Enter an authorised licence key to unlock this local installation. Your 30-day trial begins immediately after activation."}</p>
+          {!isExpired && licenseStatus.status !== "clock_invalid" && (
+            <form onSubmit={activateTrialLicense} className="mt-7 space-y-4">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">Trial licence key
+                <input value={licenseKey} onChange={(event) => setLicenseKey(event.target.value.toUpperCase())} placeholder="EZTRIAL-XXXXXX-XXXXXX-XXXXXX-XXXXXX" autoComplete="off" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-500" required />
+              </label>
+              {licenseError && <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{licenseError}</p>}
+              <button disabled={isActivatingLicense} className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 font-bold transition-opacity disabled:opacity-50">{isActivatingLicense ? "Activating…" : "Activate 30-day trial"}</button>
+            </form>
+          )}
+          {licenseStatus.status === "clock_invalid" && <p className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">The system clock changed unexpectedly. Restore the correct date and time, then restart EZoom.</p>}
+          <p className="mt-6 text-center text-xs text-slate-500">Need a key or a full licence? <a className="font-bold text-cyan-400" href="mailto:eozoe2025@gmail.com?subject=EZoom%20licence%20request">eozoe2025@gmail.com</a></p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">

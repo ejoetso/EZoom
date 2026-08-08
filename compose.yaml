@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    volumes:
+      - ./data:/app/data
     environment:
       NODE_ENV: production
       APP_URL: ${APP_URL:-http://localhost:3000}
@@ -15,3 +17,4 @@ services:
       TRIAL_EMAIL: ${TRIAL_EMAIL:-user@ejoecast.com}
       TRIAL_PASSWORD: ${TRIAL_PASSWORD:-user123!}
       TRIAL_DURATION_MINUTES: ${TRIAL_DURATION_MINUTES:-30}
+      LICENSE_DATA_DIR: /app/data
