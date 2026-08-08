@@ -153,18 +153,27 @@ interface RoomState {
 
 const rooms = new Map<string, RoomState>();
 
-const educatorAccounts = new Map([
-  [(process.env.SUPERADMIN_EMAIL || "ejoe@ejoe.com").toLowerCase(), {
-    password: process.env.SUPERADMIN_PASSWORD || "97807723!",
-    accountType: "superadmin" as const,
+const educatorAccounts = new Map<string, {
+  password: string;
+  accountType: "superadmin" | "trial";
+  maxDurationMinutes: number | null;
+}>();
+
+const superadminEmail = process.env.SUPERADMIN_EMAIL?.trim().toLowerCase();
+const superadminPassword = process.env.SUPERADMIN_PASSWORD;
+if (superadminEmail && superadminPassword) {
+  educatorAccounts.set(superadminEmail, {
+    password: superadminPassword,
+    accountType: "superadmin",
     maxDurationMinutes: null,
-  }],
-  [(process.env.TRIAL_EMAIL || "user@ejoecast.com").toLowerCase(), {
+  });
+}
+
+educatorAccounts.set((process.env.TRIAL_EMAIL || "user@ejoecast.com").toLowerCase(), {
     password: process.env.TRIAL_PASSWORD || "user123!",
-    accountType: "trial" as const,
+    accountType: "trial",
     maxDurationMinutes: Number(process.env.TRIAL_DURATION_MINUTES || 30),
-  }],
-]);
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "EZoom" });

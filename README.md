@@ -14,12 +14,7 @@ Anyone may evaluate EZoom locally using the trial educator account:
 
 The 30-minute limit is enforced by the server and starts when the educator launches the meeting. Students do not need an account. They join with their name, email, four-digit session code, and the math security answer shown on the landing page.
 
-The included superadmin defaults are intended only for initial setup:
-
-- Email: `ejoe@ejoe.com`
-- Password: `97807723!`
-
-Change the superadmin credentials through environment variables before any public or production deployment.
+Administrator credentials are intentionally excluded from source control and documentation. Set `SUPERADMIN_EMAIL` and `SUPERADMIN_PASSWORD` privately in the deployment environment.
 
 ## Capabilities
 
@@ -102,8 +97,8 @@ Copy `.env.example` to `.env` and adjust these variables:
 | --- | --- | --- |
 | `APP_URL` | Public application URL | `http://localhost:3000` |
 | `GEMINI_API_KEY` | Optional Gemini API key for AI notes and quizzes | empty |
-| `SUPERADMIN_EMAIL` | Unlimited educator login | `ejoe@ejoe.com` |
-| `SUPERADMIN_PASSWORD` | Unlimited educator password | `97807723!` |
+| `SUPERADMIN_EMAIL` | Unlimited administrator login | required secret |
+| `SUPERADMIN_PASSWORD` | Unlimited administrator password | required secret |
 | `TRIAL_EMAIL` | Public trial educator login | `user@ejoecast.com` |
 | `TRIAL_PASSWORD` | Public trial educator password | `user123!` |
 | `TRIAL_DURATION_MINUTES` | Trial meeting duration | `30` |
