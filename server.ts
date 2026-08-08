@@ -2,6 +2,8 @@ import express from "express";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
+import os from "os";
+import dgram from "dgram";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -13,6 +15,64 @@ const server = http.createServer(app);
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
+
+function getLanAddress(): string | null {
+  const candidates = Object.entries(os.networkInterfaces()).flatMap(([name, addresses]) =>
+    (addresses || [])
+      .filter((address) => address.family === "IPv4" && !address.internal)
+      .map((address) => ({ name, address: address.address }))
+  );
+
+  const physicalCandidates = candidates.filter(({ name }) =>
+    !/vEthernet|virtual|WSL|Docker|VMware|Hyper-V|loopback|bluetooth/i.test(name)
+  );
+  const usableCandidates = physicalCandidates.length > 0 ? physicalCandidates : candidates;
+
+  const privateAddress = usableCandidates
+    .sort((a, b) => {
+      const preferred = /wi-?fi|wlan|ethernet|以太网/i;
+      return Number(preferred.test(b.name)) - Number(preferred.test(a.name));
+    })
+    .find(({ address }) =>
+      /^10\./.test(address) ||
+      /^192\.168\./.test(address) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(address)
+    );
+
+  return privateAddress?.address || usableCandidates[0]?.address || null;
+}
+
+function getRoutedLanAddress(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket("udp4");
+    let settled = false;
+    const finish = (address: string | null) => {
+      if (settled) return;
+      settled = true;
+      try { socket.close(); } catch {}
+      resolve(address);
+    };
+    const timer = setTimeout(() => finish(getLanAddress()), 1000);
+
+    socket.once("error", () => {
+      clearTimeout(timer);
+      finish(getLanAddress());
+    });
+    socket.connect(53, "8.8.8.8", () => {
+      clearTimeout(timer);
+      const address = socket.address();
+      finish(typeof address === "object" ? address.address : getLanAddress());
+    });
+  });
+}
+
+app.get("/api/network-info", async (_req, res) => {
+  const lanAddress = await getRoutedLanAddress();
+  res.json({
+    lanAddress,
+    joinBaseUrl: lanAddress ? `http://${lanAddress}:${PORT}` : null,
+  });
+});
 
 // Lazy-loaded Gemini Client to prevent crashing on startup if key is unconfigured
 let aiInstance: GoogleGenAI | null = null;
@@ -42,6 +102,10 @@ interface RoomState {
   joinCode: string; // e.g. EDU-1234-56
   educatorId: string;
   educatorName: string;
+  educatorEmail: string;
+  accountType: "superadmin" | "trial";
+  maxDurationMinutes: number | null;
+  expiresAt?: string;
   isLocked: boolean;
   waitingRoomEnabled: boolean;
   chatEnabled: boolean;
@@ -81,11 +145,30 @@ interface RoomState {
     slideIdx?: number;
   };
   lastScreenFrame?: string;
+  educatorCameraActive?: boolean;
+  lastEducatorCameraFrame?: string;
   visitCount?: number;
   visitedUsers?: Set<string>;
 }
 
 const rooms = new Map<string, RoomState>();
+
+const educatorAccounts = new Map([
+  [(process.env.SUPERADMIN_EMAIL || "ejoe@ejoe.com").toLowerCase(), {
+    password: process.env.SUPERADMIN_PASSWORD || "97807723!",
+    accountType: "superadmin" as const,
+    maxDurationMinutes: null,
+  }],
+  [(process.env.TRIAL_EMAIL || "user@ejoecast.com").toLowerCase(), {
+    password: process.env.TRIAL_PASSWORD || "user123!",
+    accountType: "trial" as const,
+    maxDurationMinutes: Number(process.env.TRIAL_DURATION_MINUTES || 30),
+  }],
+]);
+
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok", service: "EZoom" });
+});
 
 // Helper to generate simple 4-digit join code
 function generateJoinCode(): string {
@@ -96,17 +179,28 @@ function generateJoinCode(): string {
   return code;
 }
 
+app.post("/api/educator/login", (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const account = educatorAccounts.get(email);
+  if (!account || account.password !== req.body.password) {
+    return res.status(401).json({ error: "Invalid educator email or password." });
+  }
+  res.json({ email, accountType: account.accountType, maxDurationMinutes: account.maxDurationMinutes });
+});
+
 // REST API Endpoints
 
 // Create Classroom
 app.post("/api/classrooms", (req, res) => {
-  const { title, courseName, educatorName, waitingRoom, chatEnabled, recording, password } = req.body;
+  const { title, courseName, educatorName, waitingRoom, chatEnabled, recording, email, password } = req.body;
   if (!title || !educatorName) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  if (password !== "97807723" && password !== "20260724") {
-    return res.status(403).json({ error: "Incorrect broadcasting authorization password." });
+  const educatorEmail = String(email || "").trim().toLowerCase();
+  const account = educatorAccounts.get(educatorEmail);
+  if (!account || account.password !== password) {
+    return res.status(403).json({ error: "Invalid educator account credentials." });
   }
 
   const joinCode = generateJoinCode();
@@ -120,6 +214,9 @@ app.post("/api/classrooms", (req, res) => {
     joinCode,
     educatorId,
     educatorName,
+    educatorEmail,
+    accountType: account.accountType,
+    maxDurationMinutes: account.maxDurationMinutes,
     isLocked: false,
     waitingRoomEnabled: waitingRoom !== false,
     chatEnabled: chatEnabled !== false,
@@ -153,6 +250,8 @@ app.post("/api/classrooms", (req, res) => {
       waitingRoomEnabled: newRoom.waitingRoomEnabled,
       chatEnabled: newRoom.chatEnabled,
       recordingEnabled: newRoom.recordingEnabled,
+      accountType: newRoom.accountType,
+      maxDurationMinutes: newRoom.maxDurationMinutes,
     }
   });
 });
@@ -160,7 +259,7 @@ app.post("/api/classrooms", (req, res) => {
 // Check/Validate Classroom Join Code
 app.get("/api/classrooms/:code", (req, res) => {
   const { code } = req.params;
-  const room = rooms.get(code.toUpperCase());
+  const room = rooms.get(code.trim().toUpperCase());
   if (!room) {
     return res.status(404).json({ error: "Classroom not found" });
   }
@@ -244,7 +343,7 @@ app.post("/api/gemini/summarize", async (req, res) => {
   try {
     const ai = getGeminiClient();
     const prompt = `
-You are the EduCast AI Learning Assistant. Summarize this lecture for students.
+You are the EZoom AI Learning Assistant. Summarize this lecture for students.
 Create a highly professional, beautiful educational summary with key takeaways and definitions.
 Use clean markdown layout (headings, bullets, and bold terms).
 
@@ -330,14 +429,17 @@ wss.on("connection", (ws: WebSocket) => {
 
       if (type === "join") {
         const { userId, name, email, role, roomCode } = message;
-        const code = roomCode.toUpperCase();
+        if (typeof roomCode !== "string") {
+          ws.send(JSON.stringify({ type: "error", message: "A classroom code is required" }));
+          return;
+        }
+        const code = roomCode.trim().toUpperCase();
         const room = rooms.get(code);
 
         if (!room) {
           ws.send(JSON.stringify({ type: "error", message: "Classroom not found" }));
           return;
         }
-
         userSession = { userId, name, role, roomCode: code };
 
         // If user is the educator
@@ -347,6 +449,19 @@ wss.on("connection", (ws: WebSocket) => {
           (room as any).educatorWs = ws;
           room.status = "live";
           if (!room.startedAt) room.startedAt = new Date().toISOString();
+          if (room.maxDurationMinutes && !room.expiresAt) {
+            const expiresAt = Date.now() + room.maxDurationMinutes * 60 * 1000;
+            room.expiresAt = new Date(expiresAt).toISOString();
+            setTimeout(() => {
+              if (room.status === "ended") return;
+              room.status = "ended";
+              room.endedAt = new Date().toISOString();
+              broadcastToRoom(room, {
+                type: "session-ended",
+                reason: "The 30-minute trial meeting limit has been reached.",
+              });
+            }, room.maxDurationMinutes * 60 * 1000);
+          }
 
           // Sync initial data
           ws.send(JSON.stringify({
@@ -360,7 +475,12 @@ wss.on("connection", (ws: WebSocket) => {
               chatEnabled: room.chatEnabled,
               recordingEnabled: room.recordingEnabled,
               visitCount: room.visitCount || 56,
-              concurrentUsers: room.participants.size + 1
+              concurrentUsers: room.participants.size + 1,
+              accountType: room.accountType,
+              maxDurationMinutes: room.maxDurationMinutes,
+              startedAt: room.startedAt,
+              expiresAt: room.expiresAt,
+              educatorCameraActive: !!room.educatorCameraActive,
             },
             participants: Array.from(room.participants.values()).map(p => ({
               id: p.id,
@@ -449,7 +569,12 @@ wss.on("connection", (ws: WebSocket) => {
               recordingEnabled: room.recordingEnabled,
               isHostVoiceActive: !!(room as any).isHostVoiceActive,
               visitCount: room.visitCount,
-              concurrentUsers: room.participants.size + (room.educatorId ? 1 : 0)
+              concurrentUsers: room.participants.size + (room.educatorId ? 1 : 0),
+              accountType: room.accountType,
+              maxDurationMinutes: room.maxDurationMinutes,
+              startedAt: room.startedAt,
+              expiresAt: room.expiresAt,
+              educatorCameraActive: !!room.educatorCameraActive,
             },
             chat: room.chat,
             questions: room.questions,
@@ -458,6 +583,7 @@ wss.on("connection", (ws: WebSocket) => {
             whiteboard: room.whiteboard,
             screenSharing: room.screenSharing,
             screenFrame: room.lastScreenFrame,
+            educatorCameraFrame: room.lastEducatorCameraFrame,
           }));
 
           // Notify room of participant change
@@ -658,6 +784,24 @@ wss.on("connection", (ws: WebSocket) => {
       }
 
       // Host Live Microphone Voice Streaming
+      else if (type === "educator-camera-state") {
+        if (!userSession || userSession.role !== "EDUCATOR") return;
+        const room = rooms.get(userSession.roomCode);
+        if (!room) return;
+        room.educatorCameraActive = !!message.active;
+        if (!room.educatorCameraActive) room.lastEducatorCameraFrame = undefined;
+        broadcastToRoom(room, { type: "educator-camera-state", active: room.educatorCameraActive }, userSession.userId);
+      }
+
+      else if (type === "educator-camera-frame") {
+        if (!userSession || userSession.role !== "EDUCATOR" || typeof message.dataUrl !== "string") return;
+        const room = rooms.get(userSession.roomCode);
+        if (!room || message.dataUrl.length > 300000) return;
+        room.educatorCameraActive = true;
+        room.lastEducatorCameraFrame = message.dataUrl;
+        broadcastToRoom(room, { type: "educator-camera-frame", dataUrl: message.dataUrl }, userSession.userId);
+      }
+
       else if (type === "host-voice-chunk") {
         if (!userSession || userSession.role !== "EDUCATOR") return;
         const room = rooms.get(userSession.roomCode);
@@ -1219,7 +1363,10 @@ wss.on("connection", (ws: WebSocket) => {
       const room = rooms.get(roomCode);
       if (room) {
         if (role === "EDUCATOR") {
+          room.educatorCameraActive = false;
+          room.lastEducatorCameraFrame = undefined;
           // Notify students that educator disconnected
+          broadcastToRoom(room, { type: "educator-camera-state", active: false });
           broadcastToRoom(room, { type: "educator-left" });
         } else {
           // Remove from participants
@@ -1325,7 +1472,7 @@ async function startServer() {
   }
 
   server.listen(PORT, "0.0.0.0", () => {
-    console.log(`EduCast Server running on port ${PORT}`);
+    console.log(`EZoom Server running on port ${PORT}`);
   });
 }
 

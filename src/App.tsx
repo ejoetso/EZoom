@@ -63,6 +63,11 @@ export default function App() {
   const [userName, setUserName] = useState("");
   const [studentEmail, setStudentEmail] = useState("");
   const [roomCode, setRoomCode] = useState("");
+  const [securityAnswer, setSecurityAnswer] = useState("");
+  const [mathChallenge, setMathChallenge] = useState(() => ({
+    left: Math.floor(Math.random() * 9) + 1,
+    right: Math.floor(Math.random() * 9) + 1,
+  }));
   const [classroomTitle, setClassroomTitle] = useState("");
   const [courseName, setCourseName] = useState("");
   const [isLocked, setIsLocked] = useState(false);
@@ -87,6 +92,9 @@ export default function App() {
   // Educator Computer Class Recording State
   const [isRecordingClass, setIsRecordingClass] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [meetingStartedAt, setMeetingStartedAt] = useState<string | null>(null);
+  const [meetingExpiresAt, setMeetingExpiresAt] = useState<string | null>(null);
+  const [meetingTimeSeconds, setMeetingTimeSeconds] = useState(0);
   const recordedChunksRef = useRef<Blob[]>([]);
   const classMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingTimerRef = useRef<any>(null);
@@ -103,7 +111,23 @@ export default function App() {
   const [errorText, setErrorText] = useState<string | null>(null);
   const [educatorError, setEducatorError] = useState<string | null>(null);
   const [broadcastingPassword, setBroadcastingPassword] = useState("");
+  const [educatorEmail, setEducatorEmail] = useState("");
+  const [educatorAuthenticated, setEducatorAuthenticated] = useState(false);
+  const [educatorAccountType, setEducatorAccountType] = useState<"superadmin" | "trial" | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
+  const [joinBaseUrl, setJoinBaseUrl] = useState(() => window.location.origin);
+
+  useEffect(() => {
+    const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+    if (!isLocalHost) return;
+
+    fetch("/api/network-info")
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (data?.joinBaseUrl) setJoinBaseUrl(data.joinBaseUrl);
+      })
+      .catch(() => {});
+  }, []);
 
   // Synchronized Lists
   const [chatMessages, setChatMessages] = useState<any[]>([]);
@@ -133,6 +157,8 @@ export default function App() {
 
   const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
   const [remoteScreenFrame, setRemoteScreenFrame] = useState<string | null>(null);
+  const [remoteEducatorCameraFrame, setRemoteEducatorCameraFrame] = useState<string | null>(null);
+  const [remoteEducatorCameraActive, setRemoteEducatorCameraActive] = useState(false);
   const [streamMode, setStreamMode] = useState<"video" | "compatibility">("compatibility");
   const peerCandidatesRef = useRef<Record<string, RTCIceCandidate[]>>({});
   const studentCandidatesRef = useRef<RTCIceCandidate[]>([]);
@@ -225,22 +251,37 @@ export default function App() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const unlockAudioContext = () => {
+  const unlockAudioContext = async () => {
     try {
       if (!studentAudioContextRef.current || studentAudioContextRef.current.state === "closed") {
         studentAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
       if (studentAudioContextRef.current.state === "suspended") {
-        studentAudioContextRef.current.resume().then(() => {
-          setAudioContextUnlocked(true);
-        }).catch(() => {});
-      } else {
-        setAudioContextUnlocked(true);
+        await studentAudioContextRef.current.resume();
       }
+      const isRunning = studentAudioContextRef.current.state === "running";
+      setAudioContextUnlocked(isRunning);
+      if (isRunning) studentAudioNextTimeRef.current = studentAudioContextRef.current.currentTime;
     } catch (e) {
       console.error("AudioContext unlock error:", e);
+      setAudioContextUnlocked(false);
     }
   };
+
+  useEffect(() => {
+    if (currentScreen !== "classroom" || !meetingStartedAt) return;
+    const updateMeetingTimer = () => {
+      const now = Date.now();
+      if (meetingExpiresAt) {
+        setMeetingTimeSeconds(Math.max(0, Math.ceil((new Date(meetingExpiresAt).getTime() - now) / 1000)));
+      } else {
+        setMeetingTimeSeconds(Math.max(0, Math.floor((now - new Date(meetingStartedAt).getTime()) / 1000)));
+      }
+    };
+    updateMeetingTimer();
+    const timer = window.setInterval(updateMeetingTimer, 1000);
+    return () => window.clearInterval(timer);
+  }, [currentScreen, meetingStartedAt, meetingExpiresAt]);
 
   // Educator Live Voice Microphone Streaming Handler (Web Audio API PCM Streaming)
   const toggleHostLiveVoice = async () => {
@@ -289,6 +330,7 @@ export default function App() {
         scriptNode.onaudioprocess = (e) => {
           const activeWs = wsRef.current || ws;
           if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return;
+          if (activeWs.bufferedAmount > 256 * 1024) return;
           const inputData = e.inputBuffer.getChannelData(0);
 
           const pcm16 = new Int16Array(inputData.length);
@@ -490,12 +532,31 @@ export default function App() {
   const [handRaised, setHandRaised] = useState(false);
 
   // Initialize a classroom from Landing page (for Educators)
+  const handleEducatorLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEducatorError(null);
+    try {
+      const response = await fetch("/api/educator/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: educatorEmail, password: broadcastingPassword }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Educator login failed.");
+      setEducatorEmail(data.email);
+      setEducatorAccountType(data.accountType);
+      setEducatorAuthenticated(true);
+    } catch (err: any) {
+      setEducatorError(err.message || "Educator login failed.");
+    }
+  };
+
   const handleCreateClassroom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!classroomTitle || !userName) return;
 
-    if (broadcastingPassword !== "97807723") {
-      setEducatorError("Incorrect broadcasting password. Please enter the correct password to host/start broadcasting.");
+    if (!educatorAuthenticated) {
+      setEducatorError("Please sign in with an educator account first.");
       return;
     }
 
@@ -508,6 +569,7 @@ export default function App() {
           title: classroomTitle,
           courseName,
           educatorName: userName,
+          email: educatorEmail,
           waitingRoom: waitingRoomEnabled,
           chatEnabled,
           recording: recordingEnabled,
@@ -535,22 +597,39 @@ export default function App() {
     if (!roomCode || !userName) return;
 
     const emailClean = studentEmail.trim().toLowerCase();
-    const isAllowedDomain = /\.(edu\.au|edu\.hk)$/i.test(emailClean);
+    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean);
 
-    if (!emailClean || !isAllowedDomain) {
-      setErrorText("Security Verification Failed: Please enter a valid authorized school email address.");
+    if (!isValidEmail) {
+      setErrorText("Please enter a valid email address.");
+      return;
+    }
+
+    const normalizedRoomCode = roomCode.replace(/\D/g, "").slice(0, 4);
+    if (normalizedRoomCode.length !== 4) {
+      setErrorText("Please enter the complete 4-digit classroom code.");
+      return;
+    }
+    if (Number(securityAnswer) !== mathChallenge.left + mathChallenge.right) {
+      setErrorText("Incorrect math security answer. Please try again.");
+      setMathChallenge({
+        left: Math.floor(Math.random() * 9) + 1,
+        right: Math.floor(Math.random() * 9) + 1,
+      });
+      setSecurityAnswer("");
       return;
     }
 
     setErrorText(null);
     try {
-      const response = await fetch(`/api/classrooms/${roomCode.toUpperCase()}`);
+      const response = await fetch(`/api/classrooms/${normalizedRoomCode}`);
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || "Classroom code is invalid or expired.");
       }
 
       const data = await response.json();
+      setRoomCode(normalizedRoomCode);
+      setStudentEmail(emailClean);
       setClassroomTitle(data.title);
       setCourseName(data.courseName);
       setRole("STUDENT");
@@ -571,6 +650,11 @@ export default function App() {
     setMicMuted(!settings.micEnabled);
     setScreenShareQuality(settings.qualityMode);
     setConnectionStatus("connecting");
+
+    // Student playback must be unlocked directly from this user gesture.
+    if (role === "STUDENT") {
+      void unlockAudioContext();
+    }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -604,9 +688,25 @@ export default function App() {
           socket.close();
         }
 
+        else if (data.type === "error") {
+          setErrorText(data.message || "Unable to join this classroom.");
+          setConnectionStatus("disconnected");
+          setCurrentScreen("lobby");
+          socket.close();
+        }
+
         else if (data.type === "joined") {
           setConnectionStatus("connected");
           setCurrentScreen("classroom");
+
+          // "Mic On" in the educator lobby means start broadcasting on entry.
+          if (
+            role === "EDUCATOR" &&
+            lastLaunchSettingsRef.current?.micEnabled &&
+            !hostScriptProcessorRef.current
+          ) {
+            void toggleHostLiveVoice();
+          }
           
           if (data.chat) setChatMessages(data.chat);
           if (data.questions) setQuestions(data.questions);
@@ -616,6 +716,9 @@ export default function App() {
           if (data.participants) setParticipants(data.participants);
           if (data.waitingRoom) setWaitingRoom(data.waitingRoom);
           if (data.classroom) {
+            if (data.classroom.startedAt) setMeetingStartedAt(data.classroom.startedAt);
+            setMeetingExpiresAt(data.classroom.expiresAt || null);
+            setRemoteEducatorCameraActive(!!data.classroom.educatorCameraActive);
             if (data.classroom.visitCount !== undefined) {
               setVisitCount(data.classroom.visitCount);
             }
@@ -641,6 +744,20 @@ export default function App() {
               }
             }
           }
+          if (data.educatorCameraFrame) {
+            setRemoteEducatorCameraFrame(data.educatorCameraFrame);
+            setRemoteEducatorCameraActive(true);
+          }
+        }
+
+        else if (data.type === "educator-camera-state") {
+          setRemoteEducatorCameraActive(!!data.active);
+          if (!data.active) setRemoteEducatorCameraFrame(null);
+        }
+
+        else if (data.type === "educator-camera-frame") {
+          setRemoteEducatorCameraFrame(data.dataUrl);
+          setRemoteEducatorCameraActive(true);
         }
 
         else if (data.type === "chat-message") {
@@ -775,8 +892,14 @@ export default function App() {
                 studentAudioContextRef.current = ctx;
               }
               if (ctx.state === "suspended") {
-                ctx.resume().catch(() => {});
+                await ctx.resume().catch(() => {});
               }
+              if (ctx.state !== "running") {
+                setAudioContextUnlocked(false);
+                studentAudioNextTimeRef.current = 0;
+                return;
+              }
+              setAudioContextUnlocked(true);
 
               const buffer = ctx.createBuffer(1, float32.length, data.sampleRate || ctx.sampleRate);
               buffer.getChannelData(0).set(float32);
@@ -1453,6 +1576,8 @@ export default function App() {
     }
   ];
 
+  const directJoinUrl = `${joinBaseUrl}/?code=${encodeURIComponent(roomCode)}`;
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
       
@@ -1478,27 +1603,31 @@ export default function App() {
               <Monitor className="w-8 h-8 text-emerald-400 stroke-[1.5]" />
             </div>
             <h1 className="text-4xl font-bold font-sans tracking-tight text-slate-900 sm:text-5xl">
-              EjoeCast Platform
+              EZoom
             </h1>
             <p className="text-sm font-sans text-slate-500 leading-relaxed">
               Secure, low-latency screen-broadcasting and collaborative digital whiteboard built for modern educators, schools, and training organizations.
+            </p>
+            <p className="text-xs text-slate-400">
+              Commercial use, education deployment, or collaboration: <a className="font-semibold text-emerald-700 hover:underline" href="mailto:eozoe2025@gmail.com">eozoe2025@gmail.com</a>
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
             
             {/* Educator Creation Column */}
-            <div className="bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between">
+            <div className="order-2 bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between">
               <div className="space-y-4">
                 <span className="bg-emerald-50 text-emerald-800 text-[10px] font-mono px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">
                   Educator Portal
                 </span>
-                <h2 className="text-2xl font-sans font-semibold text-slate-900">Start a Broadcasting Class</h2>
+                <h2 className="text-2xl font-sans font-semibold text-slate-900">Educator Sign In</h2>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Establish a secure classroom space. Screen broadcast, use annotation pens on top of code displays, run real-time polls, and sync whiteboards.
+                  Educator accounts can create and manage secure broadcasting sessions.
                 </p>
               </div>
 
+              {educatorAuthenticated ? (
               <form onSubmit={handleCreateClassroom} className="space-y-4 pt-4">
                 {educatorError && (
                   <div className="bg-red-50 border border-red-200 text-red-800 p-3.5 rounded-xl text-xs flex items-start gap-2 animate-fadeIn">
@@ -1542,21 +1671,9 @@ export default function App() {
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center">
-                    <label className="text-[11px] font-sans font-medium text-slate-600">Password for Broadcasting</label>
-                    <span className="text-[10px] font-sans text-slate-400 flex items-center gap-1">
-                      <Lock className="w-3 h-3 text-amber-500" /> Required
-                    </span>
-                  </div>
-                  <input
-                    type="password"
-                    placeholder="Enter the broadcasting authorization password"
-                    value={broadcastingPassword}
-                    onChange={(e) => setBroadcastingPassword(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-sans focus:outline-none focus:ring-1 focus:ring-slate-900 transition-all"
-                    required
-                  />
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800 flex items-center justify-between">
+                  <span>{educatorEmail}</span>
+                  <span className="font-bold uppercase">{educatorAccountType === "trial" ? "30-minute trial" : "Superadmin"}</span>
                 </div>
 
                 {/* Feature Toggles */}
@@ -1589,15 +1706,36 @@ export default function App() {
                   Create Session Code <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
+              ) : (
+              <form onSubmit={handleEducatorLogin} autoComplete="off" className="space-y-4 pt-4">
+                {educatorError && (
+                  <div className="bg-red-50 border border-red-200 text-red-800 p-3.5 rounded-xl text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" /> <span>{educatorError}</span>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-medium text-slate-600">Educator Email</label>
+                  <input type="email" name="educator_login_email" autoComplete="off" placeholder="educator@example.com" value={educatorEmail} onChange={(e) => setEducatorEmail(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-slate-900" required />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-medium text-slate-600">Password</label>
+                  <input type="password" name="educator_login_password" autoComplete="new-password" placeholder="Enter educator password" value={broadcastingPassword} onChange={(e) => setBroadcastingPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-slate-900" required />
+                </div>
+                <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3.5 rounded-xl text-xs font-semibold shadow-md flex items-center justify-center gap-2">
+                  <Lock className="w-4 h-4" /> Sign In as Educator
+                </button>
+                <p className="text-[10px] text-slate-400 text-center">Trial meetings are limited to 30 minutes.</p>
+              </form>
+              )}
             </div>
 
             {/* Student Joining Column */}
-            <div className="bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between">
+            <div className="order-1 bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between">
               <div className="space-y-4">
                 <span className="bg-slate-100 text-slate-800 text-[10px] font-mono px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">
                   Student Portal
                 </span>
-                <h2 className="text-2xl font-sans font-semibold text-slate-900">Join a Classroom Room</h2>
+                <h2 className="text-2xl font-sans font-semibold text-slate-900">Enter Your Session</h2>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   Enter your assigned classroom invitation code. Enjoy low-latency screen sharing, download lecture notes, answer polls, and draw on collaborative canvases.
                 </p>
@@ -1626,15 +1764,15 @@ export default function App() {
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <label className="text-[11px] font-sans font-medium text-slate-600 flex items-center gap-1">
-                      <Mail className="w-3 h-3 text-emerald-600" /> School Email Security Check
+                      <Mail className="w-3 h-3 text-emerald-600" /> Your Email Address
                     </label>
                     <span className="text-[10px] text-emerald-600 font-medium flex items-center gap-0.5">
-                      <ShieldCheck className="w-3 h-3" /> Security Question
+                      <ShieldCheck className="w-3 h-3" /> Required
                     </span>
                   </div>
                   <input
                     type="email"
-                    placeholder="Enter your official school email address"
+                    placeholder="Enter your email address"
                     value={studentEmail}
                     onChange={(e) => setStudentEmail(e.target.value)}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-sans focus:outline-none focus:ring-1 focus:ring-slate-900 transition-all font-mono"
@@ -1664,6 +1802,23 @@ export default function App() {
                     value={roomCode}
                     onChange={(e) => setRoomCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-base font-mono font-bold tracking-widest text-center text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all uppercase"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-sans font-medium text-slate-600">
+                    Security Check: What is {mathChallenge.left} + {mathChallenge.right}?
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={3}
+                    placeholder="Enter the answer"
+                    value={securityAnswer}
+                    onChange={(e) => setSecurityAnswer(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-base font-mono font-bold tracking-widest text-center text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
                     required
                   />
                 </div>
@@ -1914,6 +2069,9 @@ export default function App() {
               )}
 
               <span className="text-xs font-mono text-slate-400 hidden sm:inline">Role: <span className="font-bold text-white uppercase">{role}</span></span>
+              <div className={`px-3 py-2 rounded-xl border font-mono text-xs ${meetingExpiresAt ? "bg-amber-950/80 border-amber-700 text-amber-300" : "bg-slate-800 border-slate-700 text-emerald-300"}`}>
+                {meetingExpiresAt ? "Trial left" : "Meeting"}: {formatRecordingDuration(meetingTimeSeconds)}
+              </div>
               
               <button
                 id="leave_session_btn"
@@ -2329,6 +2487,7 @@ export default function App() {
                     setWaitingRoom([]);
                     setWhiteboardHistory([]);
                     setRoomCode("");
+                    setSecurityAnswer("");
                     setCourseName("");
                     setClassroomTitle("");
                   }}
@@ -2366,7 +2525,7 @@ export default function App() {
 
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 inline-block shadow-inner">
               <QRCodeSVG
-                value={`${window.location.origin}/?code=${roomCode}`}
+                value={directJoinUrl}
                 size={200}
                 level="H"
                 includeMargin={true}
@@ -2384,8 +2543,7 @@ export default function App() {
             <div className="flex gap-2 pt-1">
               <button
                 onClick={() => {
-                  const url = `${window.location.origin}/?code=${roomCode}`;
-                  navigator.clipboard.writeText(url);
+                  navigator.clipboard.writeText(directJoinUrl);
                   showStreamToast("Direct join link copied to clipboard!");
                 }}
                 className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -2408,7 +2566,32 @@ export default function App() {
 
       {/* Global Camera Picture-in-Picture & Mic Testing Modals */}
       {currentScreen === "classroom" && (
-        <CameraPipOverlay role={role} userName={userName} />
+        role === "EDUCATOR" ? (
+        <CameraPipOverlay
+          role={role}
+          userName={userName}
+          autoStart={role === "EDUCATOR" && !!lastLaunchSettingsRef.current?.camEnabled}
+          onCameraStateChange={(active) => {
+            const activeSocket = wsRef.current;
+            if (activeSocket?.readyState === WebSocket.OPEN) {
+              activeSocket.send(JSON.stringify({ type: "educator-camera-state", active }));
+            }
+          }}
+          onCameraFrame={(dataUrl) => {
+            const activeSocket = wsRef.current;
+            if (activeSocket?.readyState === WebSocket.OPEN && activeSocket.bufferedAmount < 512 * 1024) {
+              activeSocket.send(JSON.stringify({ type: "educator-camera-frame", dataUrl }));
+            }
+          }}
+        />
+        ) : remoteEducatorCameraActive && remoteEducatorCameraFrame ? (
+          <div className="fixed bottom-6 right-6 z-40 w-72 sm:w-80 bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-slate-950 text-xs text-slate-200 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Educator Camera Live
+            </div>
+            <img src={remoteEducatorCameraFrame} alt="Live educator camera" className="w-full aspect-video object-cover scale-x-[-1]" />
+          </div>
+        ) : null
       )}
       <MicTestModal isOpen={isMicTestOpen} onClose={() => setIsMicTestOpen(false)} />
 

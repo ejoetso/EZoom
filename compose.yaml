@@ -1,0 +1,17 @@
+services:
+  ezoom:
+    build:
+      context: .
+    container_name: ezoom
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-ejoe@ejoe.com}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:-97807723!}
+      TRIAL_EMAIL: ${TRIAL_EMAIL:-user@ejoecast.com}
+      TRIAL_PASSWORD: ${TRIAL_PASSWORD:-user123!}
+      TRIAL_DURATION_MINUTES: ${TRIAL_DURATION_MINUTES:-30}

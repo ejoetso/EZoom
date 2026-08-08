@@ -30,6 +30,8 @@ export default function Lobby({ onJoin, title, courseName, role, roomCode, onOpe
 
   // Setup media preview
   useEffect(() => {
+    let previewStream: MediaStream | null = null;
+
     async function setupPreview() {
       try {
         const constraints = {
@@ -37,6 +39,7 @@ export default function Lobby({ onJoin, title, courseName, role, roomCode, onOpe
           audio: true,
         };
         const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        previewStream = mediaStream;
         setStream(mediaStream);
 
         if (videoRef.current && mediaStream.getVideoTracks().length > 0) {
@@ -80,9 +83,7 @@ export default function Lobby({ onJoin, title, courseName, role, roomCode, onOpe
     setupPreview();
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
+      previewStream?.getTracks().forEach((track) => track.stop());
       if (micIntervalRef.current) {
         cancelAnimationFrame(micIntervalRef.current);
       }

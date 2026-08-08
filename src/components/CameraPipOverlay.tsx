@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Camera, CameraOff, PictureInPicture2, Maximize2, Minimize2, Move, X, Mic, MicOff, RefreshCw } from "lucide-react";
 
 interface CameraPipOverlayProps {
   role: "EDUCATOR" | "STUDENT";
   userName: string;
   isHostVoiceActive?: boolean;
+  autoStart?: boolean;
+  onCameraFrame?: (dataUrl: string) => void;
+  onCameraStateChange?: (active: boolean) => void;
 }
 
-export default function CameraPipOverlay({ role, userName }: CameraPipOverlayProps) {
+export default function CameraPipOverlay({ role, userName, autoStart = false, onCameraFrame, onCameraStateChange }: CameraPipOverlayProps) {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isNativePipActive, setIsNativePipActive] = useState(false);
@@ -17,6 +20,8 @@ export default function CameraPipOverlay({ role, userName }: CameraPipOverlayPro
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const autoStartedRef = useRef(false);
 
   const startCamera = async () => {
     setErrorMessage(null);
@@ -25,12 +30,10 @@ export default function CameraPipOverlay({ role, userName }: CameraPipOverlayPro
         video: { width: 480, height: 360 },
         audio: true,
       });
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       setIsCameraActive(true);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
+      onCameraStateChange?.(true);
     } catch (err: any) {
       console.error("Camera access error:", err);
       setErrorMessage(err.message || "Failed to access webcam camera.");
@@ -44,10 +47,47 @@ export default function CameraPipOverlay({ role, userName }: CameraPipOverlayPro
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
       setStream(null);
+      streamRef.current = null;
     }
     setIsCameraActive(false);
     setIsNativePipActive(false);
+    onCameraStateChange?.(false);
   };
+
+  const bindVideoRef = useCallback((element: HTMLVideoElement | null) => {
+    videoRef.current = element;
+    if (element && stream) {
+      element.srcObject = stream;
+      void element.play().catch(() => {});
+    }
+  }, [stream]);
+
+  useEffect(() => {
+    if (autoStart && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      void startCamera();
+    }
+  }, [autoStart]);
+
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!isCameraActive || !stream || role !== "EDUCATOR" || !onCameraFrame) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = 480;
+    canvas.height = 360;
+    const context = canvas.getContext("2d");
+    const timer = window.setInterval(() => {
+      const video = videoRef.current;
+      if (!video || !context || video.readyState < 2) return;
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      onCameraFrame(canvas.toDataURL("image/jpeg", 0.62));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [isCameraActive, stream, role, onCameraFrame]);
 
   const toggleNativePip = async () => {
     if (!videoRef.current) return;
@@ -159,7 +199,7 @@ export default function CameraPipOverlay({ role, userName }: CameraPipOverlayPro
           {!isMinimized && (
             <div className="relative bg-black aspect-video overflow-hidden">
               <video
-                ref={videoRef}
+                ref={bindVideoRef}
                 autoPlay
                 playsInline
                 muted

@@ -1,5 +1,5 @@
 {
-  "name": "EjoeCast Platform",
+  "name": "EZoom",
   "description": "Real-time classroom screen-broadcasting and interactive whiteboard platform.",
   "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
