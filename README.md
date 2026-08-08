@@ -8,6 +8,24 @@ EZoom is a self-hosted virtual classroom and collaboration platform for educator
 
 For commercial licensing, education deployments, integrations, or collaboration, email **eozoe2025@gmail.com**.
 
+## Product demo
+
+### [▶ Watch or download the EZoom demo video](docs/EZoom-demo.mp4)
+
+<p align="center">
+  <a href="docs/EZoom-demo.mp4"><img src="docs/screenshots/05-live-classroom.png" alt="Watch the EZoom product demo" width="900" /></a>
+</p>
+
+| Educator device lobby | Live educator classroom |
+| --- | --- |
+| ![Educator device lobby](docs/screenshots/04-educator-lobby.png) | ![Live educator classroom](docs/screenshots/05-live-classroom.png) |
+
+| Student secure entry | Student classroom experience |
+| --- | --- |
+| ![Student secure entry](docs/screenshots/06-student-join.png) | ![Student classroom](docs/screenshots/07-student-classroom.png) |
+
+Read the complete [illustrated EZoom user guide](docs/USER_GUIDE.md).
+
 ## Copyright and usage
 
 Copyright © 2026 Ejoe Tso. All rights reserved.
@@ -59,7 +77,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Open `http://localhost:3000` for the public product introduction, or `http://localhost:3000/app` for student entry and educator login.
+Open `http://localhost:3000` for student entry and educator login.
 
 Check container status and logs:
 
@@ -82,7 +100,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open `http://localhost:3000` for the introduction or `http://localhost:3000/app` for the meeting application. The development server listens on all interfaces, so another device on the same network can open `http://YOUR_LAN_IP:3000`.
+Open `http://localhost:3000`. The development server listens on all interfaces, so another device on the same network can open `http://YOUR_LAN_IP:3000`.
 
 Useful validation commands:
 
