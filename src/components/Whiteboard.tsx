@@ -414,6 +414,7 @@ export default function Whiteboard({ ws, role, roomCode, initialHistory = [] }: 
       {/* Canvas Area */}
       <div ref={containerRef} className="flex-1 w-full h-full relative cursor-crosshair">
         <canvas
+          id="whiteboard-canvas"
           ref={canvasRef}
           onMouseDown={startDrawing}
           onMouseMove={draw}

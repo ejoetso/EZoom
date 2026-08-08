@@ -12,6 +12,7 @@ import {
   LogOut,
   Hand,
   Volume2,
+  VolumeX,
   Sparkles,
   Layers,
   ArrowRight,
@@ -19,8 +20,22 @@ import {
   Check,
   AlertCircle,
   HelpCircle,
-  BookOpen
+  BookOpen,
+  RefreshCw,
+  Maximize,
+  Minimize,
+  QrCode,
+  Share2,
+  X,
+  Square,
+  Circle,
+  Download,
+  ShieldCheck,
+  Mail,
+  Radio,
+  Sliders
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 
 import { UserRole, ScreenShareMode } from "./types";
 import Lobby from "./components/Lobby";
@@ -29,6 +44,8 @@ import Annotations from "./components/Annotations";
 import ChatAndQA from "./components/ChatAndQA";
 import WaitingRoomAndParticipants from "./components/WaitingRoomAndParticipants";
 import PollsManager from "./components/PollsManager";
+import MicTestModal from "./components/MicTestModal";
+import CameraPipOverlay from "./components/CameraPipOverlay";
 import AIAssistant from "./components/AIAssistant";
 
 // Unique ID Generator
@@ -44,6 +61,7 @@ export default function App() {
   // App Core State
   const [userId] = useState<string>(() => "usr_" + generateId());
   const [userName, setUserName] = useState("");
+  const [studentEmail, setStudentEmail] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [classroomTitle, setClassroomTitle] = useState("");
   const [courseName, setCourseName] = useState("");
@@ -52,8 +70,35 @@ export default function App() {
   const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(true);
   const [recordingEnabled, setRecordingEnabled] = useState(false);
 
+  // Host Live Voice Microphone Streaming State
+  const [isHostLiveVoiceActive, setIsHostLiveVoiceActive] = useState(false);
+  const [remoteHostVoiceActive, setRemoteHostVoiceActive] = useState(false);
+  const [isStudentMutedVoice, setIsStudentMutedVoice] = useState(false);
+  const [audioContextUnlocked, setAudioContextUnlocked] = useState(false);
+  const [isMicTestOpen, setIsMicTestOpen] = useState(false);
+
+  const hostMicAudioStreamRef = useRef<MediaStream | null>(null);
+  const hostAudioContextRef = useRef<AudioContext | null>(null);
+  const hostScriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+
+  const studentAudioContextRef = useRef<AudioContext | null>(null);
+  const studentAudioNextTimeRef = useRef<number>(0);
+
+  // Educator Computer Class Recording State
+  const [isRecordingClass, setIsRecordingClass] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const classMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingTimerRef = useRef<any>(null);
+
   // Connection and Socket State
   const [ws, setWs] = useState<WebSocket | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const isStudentMutedVoiceRef = useRef(false);
+
+  useEffect(() => {
+    isStudentMutedVoiceRef.current = isStudentMutedVoice;
+  }, [isStudentMutedVoice]);
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected" | "waiting" | "rejected">("disconnected");
   const [errorText, setErrorText] = useState<string | null>(null);
   const [educatorError, setEducatorError] = useState<string | null>(null);
@@ -91,6 +136,348 @@ export default function App() {
   const [streamMode, setStreamMode] = useState<"video" | "compatibility">("compatibility");
   const peerCandidatesRef = useRef<Record<string, RTCIceCandidate[]>>({});
   const studentCandidatesRef = useRef<RTCIceCandidate[]>([]);
+
+  // Reconnection and Stream Refresh controls
+  const lastLaunchSettingsRef = useRef<{ micEnabled: boolean; camEnabled: boolean; qualityMode: ScreenShareMode } | null>(null);
+  const hasIntentionallyLeftRef = useRef(false);
+  const captureFrameRef = useRef<(() => Promise<void>) | null>(null);
+  const [streamNotification, setStreamNotification] = useState<string | null>(null);
+
+  // Fullscreen and QR modal states
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const screenStageRef = useRef<HTMLDivElement>(null);
+
+  // Auto-detect join code from URL ?code=1234
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const codeParam = params.get("code") || params.get("join");
+      if (codeParam) {
+        setRoomCode(codeParam.trim().slice(0, 4));
+        setRole("STUDENT");
+      }
+    } catch (err) {}
+  }, []);
+
+  // Fullscreen toggle & Escape key listener
+  const toggleFullScreen = async () => {
+    if (!screenStageRef.current) return;
+    if (!document.fullscreenElement && !isFullscreen) {
+      try {
+        if (screenStageRef.current.requestFullscreen) {
+          await screenStageRef.current.requestFullscreen();
+        } else if ((screenStageRef.current as any).webkitRequestFullscreen) {
+          await (screenStageRef.current as any).webkitRequestFullscreen();
+        }
+      } catch (e) {
+        console.log("Native fullscreen fallback to pseudo mode:", e);
+      }
+      setIsFullscreen(true);
+    } else {
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      } catch (e) {}
+      setIsFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        setIsFullscreen(false);
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  const showStreamToast = (msg: string) => {
+    setStreamNotification(msg);
+    setTimeout(() => {
+      setStreamNotification((current) => current === msg ? null : current);
+    }, 4000);
+  };
+
+  const formatRecordingDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    const hrs = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    if (hrs > 0) {
+      return `${hrs.toString().padStart(2, "0")}:${remMins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    }
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const unlockAudioContext = () => {
+    try {
+      if (!studentAudioContextRef.current || studentAudioContextRef.current.state === "closed") {
+        studentAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (studentAudioContextRef.current.state === "suspended") {
+        studentAudioContextRef.current.resume().then(() => {
+          setAudioContextUnlocked(true);
+        }).catch(() => {});
+      } else {
+        setAudioContextUnlocked(true);
+      }
+    } catch (e) {
+      console.error("AudioContext unlock error:", e);
+    }
+  };
+
+  // Educator Live Voice Microphone Streaming Handler (Web Audio API PCM Streaming)
+  const toggleHostLiveVoice = async () => {
+    if (role !== "EDUCATOR") return;
+
+    if (isHostLiveVoiceActive) {
+      if (hostScriptProcessorRef.current) {
+        try { hostScriptProcessorRef.current.disconnect(); } catch {}
+        hostScriptProcessorRef.current = null;
+      }
+      if (hostAudioContextRef.current && hostAudioContextRef.current.state !== "closed") {
+        try { hostAudioContextRef.current.close(); } catch {}
+        hostAudioContextRef.current = null;
+      }
+      if (hostMicAudioStreamRef.current) {
+        hostMicAudioStreamRef.current.getTracks().forEach((track) => track.stop());
+        hostMicAudioStreamRef.current = null;
+      }
+
+      setIsHostLiveVoiceActive(false);
+      const activeWs = wsRef.current || ws;
+      if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+        activeWs.send(JSON.stringify({ type: "host-voice-state", active: false }));
+      }
+      showStreamToast("Host live microphone voice streaming muted 🔇");
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        hostMicAudioStreamRef.current = stream;
+
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        hostAudioContextRef.current = audioCtx;
+
+        if (audioCtx.state === "suspended") {
+          await audioCtx.resume();
+        }
+
+        const sourceNode = audioCtx.createMediaStreamSource(stream);
+        const scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
+        hostScriptProcessorRef.current = scriptNode;
+
+        const silentGain = audioCtx.createGain();
+        silentGain.gain.value = 0;
+
+        scriptNode.onaudioprocess = (e) => {
+          const activeWs = wsRef.current || ws;
+          if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+
+          const pcm16 = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            const s = Math.max(-1, Math.min(1, inputData[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+
+          let binary = "";
+          const bytes = new Uint8Array(pcm16.buffer);
+          const len = bytes.byteLength;
+          for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64Pcm = btoa(binary);
+
+          activeWs.send(JSON.stringify({
+            type: "host-voice-chunk",
+            pcm: base64Pcm,
+            sampleRate: audioCtx.sampleRate
+          }));
+        };
+
+        sourceNode.connect(scriptNode);
+        scriptNode.connect(silentGain);
+        silentGain.connect(audioCtx.destination);
+
+        setIsHostLiveVoiceActive(true);
+        const activeWs = wsRef.current || ws;
+        if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+          activeWs.send(JSON.stringify({ type: "host-voice-state", active: true }));
+        }
+        showStreamToast("Host live microphone voice streaming active 🎙️");
+      } catch (err: any) {
+        console.error("Host live voice error:", err);
+        showStreamToast("Failed to start host microphone live voice stream: " + (err.message || "Permission denied"));
+      }
+    }
+  };
+
+  // Educator Computer Class Recording Handler (Saves directly to Host Computer Storage)
+  const startClassRecording = async () => {
+    if (role !== "EDUCATOR") return;
+
+    try {
+      // 1. Ensure host microphone stream exists for capturing host live voice
+      if (!hostMicAudioStreamRef.current) {
+        try {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          hostMicAudioStreamRef.current = micStream;
+        } catch (e) {
+          console.warn("Host microphone stream unavailable for recording:", e);
+        }
+      }
+
+      // 2. Obtain video track without prompting getDisplayMedia
+      let videoTrack: MediaStreamTrack | null = null;
+      if (screenStream && screenStream.getVideoTracks().length > 0 && screenStream.getVideoTracks()[0].readyState === "live") {
+        videoTrack = screenStream.getVideoTracks()[0];
+      } else {
+        const wbCanvas = document.getElementById("whiteboard-canvas") as HTMLCanvasElement;
+        if (wbCanvas) {
+          const canvasStream = wbCanvas.captureStream(25);
+          videoTrack = canvasStream.getVideoTracks()[0];
+        } else {
+          // Fallback offscreen canvas if whiteboard canvas element isn't in DOM
+          const dummyCanvas = document.createElement("canvas");
+          dummyCanvas.width = 1280;
+          dummyCanvas.height = 720;
+          const ctx = dummyCanvas.getContext("2d");
+          if (ctx) {
+            ctx.fillStyle = "#0f172a";
+            ctx.fillRect(0, 0, 1280, 720);
+            ctx.fillStyle = "#10b981";
+            ctx.font = "bold 28px sans-serif";
+            ctx.fillText("Classroom Session Recording", 60, 100);
+          }
+          const dummyStream = dummyCanvas.captureStream(10);
+          videoTrack = dummyStream.getVideoTracks()[0];
+        }
+      }
+
+      // 3. Audio Mixing using Web Audio API
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      const recAudioCtx = new AudioCtxClass();
+      const destNode = recAudioCtx.createMediaStreamDestination();
+
+      let hasAudioSource = false;
+
+      if (hostMicAudioStreamRef.current && hostMicAudioStreamRef.current.getAudioTracks().length > 0) {
+        try {
+          const micSource = recAudioCtx.createMediaStreamSource(hostMicAudioStreamRef.current);
+          micSource.connect(destNode);
+          hasAudioSource = true;
+        } catch (e) {
+          console.warn("Could not connect host mic to recording destination:", e);
+        }
+      }
+
+      if (screenStream && screenStream.getAudioTracks().length > 0) {
+        try {
+          const screenAudioSource = recAudioCtx.createMediaStreamSource(screenStream);
+          screenAudioSource.connect(destNode);
+          hasAudioSource = true;
+        } catch (e) {
+          console.warn("Could not connect screen audio to recording destination:", e);
+        }
+      }
+
+      const combinedTracks: MediaStreamTrack[] = [];
+      if (videoTrack) combinedTracks.push(videoTrack);
+      if (hasAudioSource && destNode.stream.getAudioTracks().length > 0) {
+        combinedTracks.push(destNode.stream.getAudioTracks()[0]);
+      }
+
+      if (combinedTracks.length === 0) {
+        showStreamToast("No video or audio stream available to record.");
+        return;
+      }
+
+      const recStream = new MediaStream(combinedTracks);
+      recordedChunksRef.current = [];
+
+      const mimeTypes = [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+        "video/mp4"
+      ];
+      const supportedMime = mimeTypes.find((m) => MediaRecorder.isTypeSupported(m)) || "";
+
+      const recorder = supportedMime ? new MediaRecorder(recStream, { mimeType: supportedMime }) : new MediaRecorder(recStream);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        if (recAudioCtx && recAudioCtx.state !== "closed") {
+          recAudioCtx.close().catch(() => {});
+        }
+        if (recordedChunksRef.current.length > 0) {
+          const mime = recorder.mimeType || "video/webm";
+          const ext = mime.includes("mp4") ? "mp4" : "webm";
+          const blob = new Blob(recordedChunksRef.current, { type: mime });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.style.display = "none";
+          a.href = url;
+          a.download = `Class_Recording_${roomCode || "EDU"}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "_")}.${ext}`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 200);
+          showStreamToast("Class recording saved & downloaded to host computer storage! 💾");
+        }
+      };
+
+      recorder.start(1000);
+      classMediaRecorderRef.current = recorder;
+      setIsRecordingClass(true);
+      setRecordingTime(0);
+
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+
+      showStreamToast("Class recording started! Capturing host sound and live whiteboard/screen.");
+    } catch (err: any) {
+      console.error("Recording error:", err);
+      showStreamToast("Failed to start recording: " + (err.message || "Unknown error"));
+    }
+  };
+
+  const stopClassRecording = () => {
+    if (classMediaRecorderRef.current && classMediaRecorderRef.current.state !== "inactive") {
+      classMediaRecorderRef.current.stop();
+    }
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    setIsRecordingClass(false);
+  };
 
   // Reactive floating emojis system
   const [floatingEmojis, setFloatingEmojis] = useState<{ id: string; emoji: string; x: number }[]>([]);
@@ -142,10 +529,18 @@ export default function App() {
     }
   };
 
-  // Pre-join verification for students (Checking room code validity)
+  // Pre-join verification for students (Checking room code validity & school email security question)
   const handleStudentJoinCheck = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!roomCode || !userName) return;
+
+    const emailClean = studentEmail.trim().toLowerCase();
+    const isAllowedDomain = /\.(edu\.au|edu\.hk)$/i.test(emailClean);
+
+    if (!emailClean || !isAllowedDomain) {
+      setErrorText("Security Verification Failed: Please enter a valid authorized school email address.");
+      return;
+    }
 
     setErrorText(null);
     try {
@@ -171,6 +566,8 @@ export default function App() {
     camEnabled: boolean;
     qualityMode: ScreenShareMode;
   }) => {
+    lastLaunchSettingsRef.current = settings;
+    hasIntentionallyLeftRef.current = false;
     setMicMuted(!settings.micEnabled);
     setScreenShareQuality(settings.qualityMode);
     setConnectionStatus("connecting");
@@ -178,6 +575,8 @@ export default function App() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const socket = new WebSocket(wsUrl);
+    setWs(socket);
+    wsRef.current = socket;
 
     socket.addEventListener("open", () => {
       setConnectionStatus("connected");
@@ -186,6 +585,7 @@ export default function App() {
         type: "join",
         userId,
         name: userName,
+        email: role === "STUDENT" ? studentEmail : undefined,
         role,
         roomCode: roomCode.toUpperCase(),
       }));
@@ -221,6 +621,10 @@ export default function App() {
             }
             if (data.classroom.concurrentUsers !== undefined) {
               setConcurrentUsers(data.classroom.concurrentUsers);
+            }
+            if (data.classroom.isHostVoiceActive) {
+              setRemoteHostVoiceActive(true);
+              unlockAudioContext();
             }
           }
 
@@ -301,6 +705,98 @@ export default function App() {
           setRemoteScreenFrame(data.dataUrl);
         }
 
+        else if (data.type === "stream-force-refresh") {
+          // Received by STUDENT
+          if (role === "STUDENT") {
+            if (studentPeerConnectionRef.current) {
+              try { studentPeerConnectionRef.current.close(); } catch {}
+              studentPeerConnectionRef.current = null;
+            }
+            studentCandidatesRef.current = [];
+            setRemoteScreenStream(null);
+            setRemoteScreenFrame(null);
+            showStreamToast("Educator has refreshed the stream connection.");
+          }
+        }
+
+        else if (data.type === "request-stream-refresh") {
+          // Received by EDUCATOR
+          if (role === "EDUCATOR" && isSharingScreen) {
+            const targetUserId = data.userId;
+            const targetUserName = data.name || "Student";
+            
+            // Re-create the peer connection with the student if in sharing screen mode
+            if (peerConnectionsRef.current[targetUserId]) {
+              try { peerConnectionsRef.current[targetUserId].close(); } catch {}
+              delete peerConnectionsRef.current[targetUserId];
+            }
+            if (screenStream) {
+              setupEducatorPeerConnection(targetUserId, screenStream);
+            }
+            
+            // Also trigger rapid frame transmission for compatibility mode fallback
+            if (captureFrameRef.current) {
+              captureFrameRef.current().catch(() => {});
+            }
+
+            showStreamToast(`Refreshed stream feed for student: ${targetUserName}`);
+          }
+        }
+
+        else if (data.type === "host-voice-state") {
+          setRemoteHostVoiceActive(data.active);
+          if (data.active) {
+            showStreamToast("Host enabled Live Microphone Voice Streaming 🎙️");
+            unlockAudioContext();
+          } else {
+            showStreamToast("Host muted Live Voice Stream 🔇");
+            studentAudioNextTimeRef.current = 0;
+          }
+        }
+
+        else if (data.type === "host-voice-chunk") {
+          setRemoteHostVoiceActive(true);
+          if (!isStudentMutedVoiceRef.current && data.pcm) {
+            try {
+              const binary = atob(data.pcm);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+              }
+              const int16 = new Int16Array(bytes.buffer);
+              const float32 = new Float32Array(int16.length);
+              for (let i = 0; i < int16.length; i++) {
+                float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7FFF);
+              }
+
+              let ctx = studentAudioContextRef.current;
+              if (!ctx || ctx.state === "closed") {
+                ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: data.sampleRate || 44100 });
+                studentAudioContextRef.current = ctx;
+              }
+              if (ctx.state === "suspended") {
+                ctx.resume().catch(() => {});
+              }
+
+              const buffer = ctx.createBuffer(1, float32.length, data.sampleRate || ctx.sampleRate);
+              buffer.getChannelData(0).set(float32);
+
+              const sourceNode = ctx.createBufferSource();
+              sourceNode.buffer = buffer;
+              sourceNode.connect(ctx.destination);
+
+              const currentTime = ctx.currentTime;
+              if (studentAudioNextTimeRef.current < currentTime) {
+                studentAudioNextTimeRef.current = currentTime + 0.04;
+              }
+              sourceNode.start(studentAudioNextTimeRef.current);
+              studentAudioNextTimeRef.current += buffer.duration;
+            } catch (e) {
+              console.error("PCM playback error:", e);
+            }
+          }
+        }
+
         else if (data.type === "simulation-slide-update") {
           if (data.slideIdx !== undefined) {
             setSimulationFrameIdx(data.slideIdx);
@@ -312,7 +808,32 @@ export default function App() {
         }
 
         else if (data.type === "session-ended") {
+          hasIntentionallyLeftRef.current = true;
+          if (screenStream) {
+            screenStream.getTracks().forEach((track) => track.stop());
+          }
+          setScreenStream(null);
+
+          Object.keys(peerConnectionsRef.current).forEach((key) => {
+            try {
+              peerConnectionsRef.current[key].close();
+            } catch {}
+          });
+          peerConnectionsRef.current = {};
+          peerCandidatesRef.current = {};
+
+          if (studentPeerConnectionRef.current) {
+            try {
+              studentPeerConnectionRef.current.close();
+            } catch {}
+            studentPeerConnectionRef.current = null;
+          }
+          studentCandidatesRef.current = [];
+          setRemoteScreenStream(null);
+          setRemoteScreenFrame(null);
+
           socket.close();
+          setConnectionStatus("disconnected");
           setCurrentScreen("post-report");
         }
 
@@ -321,6 +842,30 @@ export default function App() {
         }
 
         else if (data.type === "kicked") {
+          hasIntentionallyLeftRef.current = true;
+          if (screenStream) {
+            screenStream.getTracks().forEach((track) => track.stop());
+          }
+          setScreenStream(null);
+
+          Object.keys(peerConnectionsRef.current).forEach((key) => {
+            try {
+              peerConnectionsRef.current[key].close();
+            } catch {}
+          });
+          peerConnectionsRef.current = {};
+          peerCandidatesRef.current = {};
+
+          if (studentPeerConnectionRef.current) {
+            try {
+              studentPeerConnectionRef.current.close();
+            } catch {}
+            studentPeerConnectionRef.current = null;
+          }
+          studentCandidatesRef.current = [];
+          setRemoteScreenStream(null);
+          setRemoteScreenFrame(null);
+
           socket.close();
           setConnectionStatus("disconnected");
           setCurrentScreen("landing");
@@ -403,6 +948,15 @@ export default function App() {
 
     socket.addEventListener("close", () => {
       setConnectionStatus("disconnected");
+      if (!hasIntentionallyLeftRef.current) {
+        console.log("WebSocket connection dropped unexpectedly. Reconnecting...");
+        setConnectionStatus("connecting");
+        setTimeout(() => {
+          if (lastLaunchSettingsRef.current && !hasIntentionallyLeftRef.current) {
+            handleLaunchClassroom(lastLaunchSettingsRef.current);
+          }
+        }, 3000);
+      }
     });
 
     setWs(socket);
@@ -434,15 +988,23 @@ export default function App() {
     }
 
     try {
-      // standard DisplayMedia
+      // standard DisplayMedia with audio sharing support
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: 1920, max: 1920 },
           height: { ideal: 1080, max: 1080 },
           frameRate: { ideal: 15, max: 30 }
         },
-        audio: true
-      });
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          suppressLocalAudioPlayback: false
+        },
+        systemAudio: "include",
+        selfBrowserSurface: "include",
+        surfaceSwitching: "include"
+      } as any);
 
       setScreenStream(stream);
       setIsSharingScreen(true);
@@ -525,32 +1087,65 @@ export default function App() {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
 
-    const captureFrame = () => {
-      const video = screenVideoRef.current;
-      if (video && video.videoWidth && video.videoHeight && ws && ws.readyState === WebSocket.OPEN) {
-        // scale down for optimal bandwidth/performance
-        const scale = Math.min(960 / video.videoWidth, 540 / video.videoHeight, 1);
-        canvas.width = video.videoWidth * scale;
-        canvas.height = video.videoHeight * scale;
-        
-        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
-        try {
-          const dataUrl = canvas.toDataURL("image/jpeg", 0.45);
-          ws.send(JSON.stringify({
-            type: "screen-frame",
-            dataUrl
-          }));
-        } catch (e) {
-          console.error("Failed to capture or send screen frame:", e);
+    const captureFrame = async () => {
+      try {
+        const video = screenVideoRef.current;
+        const track = screenStream.getVideoTracks()[0];
+        if (!track || track.readyState !== "live") return;
+
+        let frameSource: any = null;
+
+        // Try to use ImageCapture to grab the latest frame directly from the track, bypassing video element restrictions in background tabs
+        if (typeof (window as any).ImageCapture !== "undefined") {
+          try {
+            const capturer = new (window as any).ImageCapture(track);
+            frameSource = await capturer.grabFrame();
+          } catch (err) {
+            // Quiet fallback to standard video capturing
+          }
         }
+
+        // Use grabbed ImageBitmap if successful, otherwise fallback to the video element
+        const source = frameSource || video;
+        if (!source) return;
+
+        const width = frameSource ? (source as ImageBitmap).width : (source as HTMLVideoElement).videoWidth;
+        const height = frameSource ? (source as ImageBitmap).height : (source as HTMLVideoElement).videoHeight;
+
+        if (width && height && ws && ws.readyState === WebSocket.OPEN) {
+          // scale down for optimal bandwidth/performance
+          const scale = Math.min(960 / width, 540 / height, 1);
+          canvas.width = width * scale;
+          canvas.height = height * scale;
+          
+          ctx?.drawImage(source, 0, 0, canvas.width, canvas.height);
+          try {
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.45);
+            ws.send(JSON.stringify({
+              type: "screen-frame",
+              dataUrl
+            }));
+          } catch (e) {
+            console.error("Failed to capture or send screen frame:", e);
+          }
+        }
+
+        // Clean up ImageBitmap if it was created
+        if (frameSource && typeof frameSource.close === "function") {
+          frameSource.close();
+        }
+      } catch (e) {
+        console.error("Error in captureFrame execution:", e);
       }
     };
 
     // Capture every 1000ms for stable compatibility broadcast
     intervalId = setInterval(captureFrame, 1000);
+    captureFrameRef.current = captureFrame;
 
     return () => {
       clearInterval(intervalId);
+      captureFrameRef.current = null;
     };
   }, [role, isSharingScreen, screenStream, ws]);
 
@@ -690,6 +1285,33 @@ export default function App() {
 
   // End Classroom Session
   const handleEndClassroom = () => {
+    hasIntentionallyLeftRef.current = true;
+
+    if (isRecordingClass) {
+      stopClassRecording();
+    }
+
+    if (isHostLiveVoiceActive) {
+      if (hostScriptProcessorRef.current) {
+        try { hostScriptProcessorRef.current.disconnect(); } catch {}
+        hostScriptProcessorRef.current = null;
+      }
+      if (hostAudioContextRef.current && hostAudioContextRef.current.state !== "closed") {
+        try { hostAudioContextRef.current.close(); } catch {}
+        hostAudioContextRef.current = null;
+      }
+      if (hostMicAudioStreamRef.current) {
+        hostMicAudioStreamRef.current.getTracks().forEach((track) => track.stop());
+        hostMicAudioStreamRef.current = null;
+      }
+      setIsHostLiveVoiceActive(false);
+    }
+
+    if (studentAudioContextRef.current && studentAudioContextRef.current.state !== "closed") {
+      try { studentAudioContextRef.current.close(); } catch {}
+      studentAudioContextRef.current = null;
+    }
+
     // Stop local screen sharing stream tracks if active
     if (screenStream) {
       screenStream.getTracks().forEach((track) => track.stop());
@@ -718,6 +1340,70 @@ export default function App() {
       if (ws) ws.close();
       setCurrentScreen("post-report");
     }
+  };
+
+  // Educator-side global stream transmission refresh
+  const handleEducatorRefreshStream = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showStreamToast("Cannot refresh stream: connection offline.");
+      return;
+    }
+
+    // Clear and close all existing student WebRTC peer connections
+    Object.keys(peerConnectionsRef.current).forEach((studentId) => {
+      try {
+        peerConnectionsRef.current[studentId].close();
+      } catch (err) {}
+      delete peerConnectionsRef.current[studentId];
+    });
+    peerConnectionsRef.current = {};
+    peerCandidatesRef.current = {};
+
+    // Notify all student clients of the forced refresh
+    ws.send(JSON.stringify({
+      type: "stream-force-refresh",
+      mode: streamMode
+    }));
+
+    // If WebRTC is sharing active stream, setup clean peer connections again
+    if (isSharingScreen && screenStream) {
+      participants.forEach((student) => {
+        setupEducatorPeerConnection(student.id, screenStream);
+      });
+    }
+
+    // If compatibility mode capturing is active, trigger an immediate frame capture
+    if (captureFrameRef.current) {
+      captureFrameRef.current().catch(() => {});
+    }
+
+    showStreamToast("Broadcasting stream successfully refreshed for all students!");
+  };
+
+  // Student-side stream feed request refresh
+  const handleStudentRefreshStream = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showStreamToast("Cannot refresh stream: connection offline.");
+      return;
+    }
+
+    // Reset local peer connection
+    if (studentPeerConnectionRef.current) {
+      try {
+        studentPeerConnectionRef.current.close();
+      } catch (err) {}
+      studentPeerConnectionRef.current = null;
+    }
+    studentCandidatesRef.current = [];
+    setRemoteScreenStream(null);
+    setRemoteScreenFrame(null);
+
+    // Send refresh request to server (forwarded to Educator)
+    ws.send(JSON.stringify({
+      type: "request-stream-refresh"
+    }));
+
+    showStreamToast("Requesting a fresh screen stream from Educator...");
   };
 
   // Copy join code helper
@@ -938,13 +1624,46 @@ export default function App() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] font-sans font-medium text-slate-600">Classroom Code (EDU-XXXX-XX)</label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-[11px] font-sans font-medium text-slate-600 flex items-center gap-1">
+                      <Mail className="w-3 h-3 text-emerald-600" /> School Email Security Check
+                    </label>
+                    <span className="text-[10px] text-emerald-600 font-medium flex items-center gap-0.5">
+                      <ShieldCheck className="w-3 h-3" /> Security Question
+                    </span>
+                  </div>
+                  <input
+                    type="email"
+                    placeholder="Enter your official school email address"
+                    value={studentEmail}
+                    onChange={(e) => setStudentEmail(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-sans focus:outline-none focus:ring-1 focus:ring-slate-900 transition-all font-mono"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[11px] font-sans font-medium text-slate-600">4-Digit Session Code</label>
+                    {roomCode.length === 4 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowQrModal(true)}
+                        className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1 cursor-pointer"
+                      >
+                        <QrCode className="w-3 h-3" /> View QR Code
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
-                    placeholder="e.g. EDU-7K4P-92"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={4}
+                    placeholder="e.g. 4829"
                     value={roomCode}
-                    onChange={(e) => setRoomCode(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-sans focus:outline-none focus:ring-1 focus:ring-slate-900 transition-all"
+                    onChange={(e) => setRoomCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-base font-mono font-bold tracking-widest text-center text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all uppercase"
                     required
                   />
                 </div>
@@ -971,6 +1690,8 @@ export default function App() {
           title={classroomTitle}
           courseName={courseName}
           role={role}
+          roomCode={roomCode}
+          onOpenQr={() => setShowQrModal(true)}
         />
       )}
 
@@ -1016,6 +1737,42 @@ export default function App() {
       {currentScreen === "classroom" && (
         <div className="p-4 md:p-6 space-y-5">
           
+          {/* Connection status and Auto Reconnect notifications */}
+          {connectionStatus !== "connected" && (
+            <div className={`p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs font-sans ${
+              connectionStatus === "connecting" 
+                ? "bg-amber-500/15 border border-amber-500/30 text-amber-300 animate-pulse" 
+                : "bg-red-500/15 border border-red-500/30 text-red-300"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${connectionStatus === "connecting" ? "bg-amber-400 animate-ping" : "bg-red-500"}`}></span>
+                <span className="font-medium text-[13px]">
+                  {connectionStatus === "connecting" 
+                    ? "Connection interrupted. Attempting automatic reconnection to the live classroom..." 
+                    : "Disconnected from the live classroom. Auto-reconnection pending..."}
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  if (lastLaunchSettingsRef.current) {
+                    handleLaunchClassroom(lastLaunchSettingsRef.current);
+                  }
+                }}
+                className="bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-2 rounded-xl text-xs font-sans font-semibold transition-all cursor-pointer shadow-sm border border-slate-700/50"
+              >
+                Reconnect Now
+              </button>
+            </div>
+          )}
+
+          {/* Persistent stream action toasts */}
+          {streamNotification && (
+            <div className="fixed top-6 right-6 z-50 bg-slate-900/95 border border-slate-800 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-2.5 max-w-md animate-fadeIn backdrop-blur-md">
+              <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+              <p className="text-xs font-sans font-medium">{streamNotification}</p>
+            </div>
+          )}
+
           {/* Top Panel Navigation Bar */}
           <div className="bg-slate-900 text-white p-4 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-md border border-slate-800">
             <div className="flex items-center gap-3">
@@ -1028,18 +1785,26 @@ export default function App() {
               </div>
             </div>
 
-            {/* Middle widgets: Join Code clipboard copy */}
+            {/* Middle widgets: Join Code clipboard copy & QR code trigger */}
             <div className="flex items-center gap-3.5">
               <div className="bg-slate-800/80 border border-slate-750 px-3.5 py-1.5 rounded-xl backdrop-blur-md font-mono text-xs flex items-center gap-2">
-                <span className="text-slate-400">Classroom Code:</span>
-                <span className="text-white font-bold">{roomCode}</span>
+                <span className="text-slate-400">Code:</span>
+                <span className="text-emerald-400 font-extrabold text-sm tracking-widest">{roomCode}</span>
                 <button
                   id="copy_code_btn"
                   onClick={handleCopyCode}
                   className="text-slate-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
-                  title="Copy Join Code"
+                  title="Copy 4-Digit Session Code"
                 >
                   {copyFeedback ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Clipboard className="w-3.5 h-3.5" />}
+                </button>
+                <div className="h-3.5 w-px bg-slate-700 mx-0.5"></div>
+                <button
+                  onClick={() => setShowQrModal(true)}
+                  className="text-slate-300 hover:text-white flex items-center gap-1 font-sans text-[11px] font-semibold transition-colors cursor-pointer bg-slate-700/60 hover:bg-slate-700 px-2 py-0.5 rounded-lg border border-slate-650"
+                  title="Display Session QR Code"
+                >
+                  <QrCode className="w-3 h-3 text-emerald-400" /> QR
                 </button>
               </div>
 
@@ -1070,9 +1835,85 @@ export default function App() {
               </div>
             </div>
 
-            {/* Actions: Leave / Terminate */}
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-mono text-slate-400">Role: <span className="font-bold text-white uppercase">{role}</span></span>
+            {/* Actions: Voice, Recording, Mic Test, Leave / Terminate */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button
+                onClick={() => setIsMicTestOpen(true)}
+                className="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 px-3 py-2 rounded-xl text-xs font-sans font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                title="Test Voice Stream Microphone Input & Volume Level"
+              >
+                <Sliders className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Test Mic</span>
+              </button>
+
+              {role === "EDUCATOR" && (
+                <>
+                  <button
+                    onClick={toggleHostLiveVoice}
+                    className={`px-3 py-2 rounded-xl text-xs font-sans font-semibold flex items-center gap-1.5 transition-all cursor-pointer border shadow-sm ${
+                      isHostLiveVoiceActive
+                        ? "bg-emerald-500 text-slate-950 border-emerald-400 font-bold animate-pulse"
+                        : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-750"
+                    }`}
+                    title={isHostLiveVoiceActive ? "Mute Host Live Voice Stream" : "Enable Host Live Voice Microphone Streaming"}
+                  >
+                    <Radio className={`w-3.5 h-3.5 ${isHostLiveVoiceActive ? "text-slate-950" : "text-emerald-400"}`} />
+                    <span>{isHostLiveVoiceActive ? "Mic Stream Active" : "Live Mic Stream"}</span>
+                  </button>
+
+                  <button
+                    onClick={isRecordingClass ? stopClassRecording : startClassRecording}
+                    className={`px-3 py-2 rounded-xl text-xs font-sans font-semibold flex items-center gap-1.5 transition-all cursor-pointer border shadow-sm ${
+                      isRecordingClass
+                        ? "bg-red-600 text-white border-red-500 font-bold animate-pulse"
+                        : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-750"
+                    }`}
+                    title={isRecordingClass ? "Stop Recording & Save to Host Computer Storage" : "Record Class to Educator Host Computer Storage"}
+                  >
+                    {isRecordingClass ? (
+                      <>
+                        <Square className="w-3.5 h-3.5 fill-current text-white" />
+                        <span>REC ({formatRecordingDuration(recordingTime)})</span>
+                      </>
+                    ) : (
+                      <>
+                        <Circle className="w-3.5 h-3.5 fill-current text-red-500" />
+                        <span>Record Class</span>
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
+
+              {role === "STUDENT" && remoteHostVoiceActive && (
+                <div className="flex items-center gap-2">
+                  {!audioContextUnlocked ? (
+                    <button
+                      onClick={unlockAudioContext}
+                      className="bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 py-1.5 rounded-xl flex items-center gap-1.5 text-xs font-sans font-bold shadow-md animate-bounce cursor-pointer"
+                    >
+                      <Volume2 className="w-4 h-4" /> Tap to Enable Live Host Voice
+                    </button>
+                  ) : (
+                    <div className="bg-emerald-950/90 border border-emerald-800 text-emerald-300 px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs font-mono shadow-sm">
+                      <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                      <span className="hidden sm:inline font-sans text-[11px] font-medium">Host Mic Live</span>
+                      <button
+                        onClick={() => {
+                          unlockAudioContext();
+                          setIsStudentMutedVoice(!isStudentMutedVoice);
+                        }}
+                        className="p-1 hover:bg-emerald-900 rounded text-emerald-300 transition-colors cursor-pointer"
+                        title={isStudentMutedVoice ? "Unmute Host Live Voice Stream" : "Mute Host Live Voice Stream"}
+                      >
+                        {isStudentMutedVoice ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <span className="text-xs font-mono text-slate-400 hidden sm:inline">Role: <span className="font-bold text-white uppercase">{role}</span></span>
               
               <button
                 id="leave_session_btn"
@@ -1126,7 +1967,7 @@ export default function App() {
                 </div>
 
                 {activeStage === "screen" && role === "STUDENT" && isSharingScreen && !isSimulationActive && (
-                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-xs">
+                  <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-xs flex-wrap">
                     <button
                       onClick={() => setStreamMode("compatibility")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-sans font-semibold transition-all cursor-pointer ${
@@ -1147,12 +1988,76 @@ export default function App() {
                     >
                       Real-Time Video (WebRTC)
                     </button>
+                    <div className="h-4 w-px bg-slate-300"></div>
+                    <button
+                      onClick={handleStudentRefreshStream}
+                      className="px-3 py-1.5 rounded-lg text-xs font-sans font-bold bg-red-600 hover:bg-red-700 text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      title="Request a fresh stream and reload player if frozen"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Refresh Stream
+                    </button>
+                  </div>
+                )}
+
+                {activeStage === "screen" && role === "EDUCATOR" && isSharingScreen && (
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-xs">
+                    <button
+                      onClick={handleEducatorRefreshStream}
+                      className="px-3 py-1.5 rounded-lg text-xs font-sans font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      title="Force a stream refresh and rebuild connections for all students"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '4s' }} />
+                      Refresh Stream Transmission
+                    </button>
                   </div>
                 )}
               </div>
 
               {/* Main Presentation Screen */}
-              <div className="aspect-video w-full rounded-2xl bg-slate-900 border border-slate-800 shadow-xl overflow-hidden relative">
+              <div
+                ref={screenStageRef}
+                className={`transition-all duration-300 relative overflow-hidden ${
+                  isFullscreen
+                    ? "fixed inset-0 z-[9999] w-screen h-screen rounded-none border-none bg-slate-950 p-0 flex flex-col justify-center items-center"
+                    : "aspect-video w-full rounded-2xl bg-slate-900 border border-slate-800 shadow-xl"
+                }`}
+              >
+                {/* Stage top-right Overlay controls: Fullscreen & QR code */}
+                <div className="absolute top-3 right-3 z-30 flex items-center gap-2">
+                  <button
+                    onClick={() => setShowQrModal(true)}
+                    className="bg-slate-950/80 hover:bg-slate-900 text-white p-2 rounded-xl border border-slate-700/70 backdrop-blur-md transition-all cursor-pointer shadow-md flex items-center gap-1.5 text-xs font-sans font-medium"
+                    title="View Session QR Code"
+                  >
+                    <QrCode className="w-4 h-4 text-emerald-400" />
+                    {!isFullscreen && <span className="hidden sm:inline">QR Code</span>}
+                  </button>
+
+                  <button
+                    onClick={toggleFullScreen}
+                    className="bg-slate-950/80 hover:bg-slate-900 text-white p-2 rounded-xl border border-slate-700/70 backdrop-blur-md transition-all cursor-pointer shadow-md flex items-center gap-1.5 text-xs font-sans font-medium"
+                    title={isFullscreen ? "Exit Fullscreen Mode (Esc)" : "Enter Fullscreen Mode"}
+                  >
+                    {isFullscreen ? <Minimize className="w-4 h-4 text-amber-400" /> : <Maximize className="w-4 h-4 text-emerald-400" />}
+                    <span>{isFullscreen ? "Exit Fullscreen (Esc)" : "Fullscreen"}</span>
+                  </button>
+                </div>
+
+                {/* Fullscreen Overlay Floating Indicator */}
+                {isFullscreen && (
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-slate-700 text-white px-5 py-2 rounded-full text-xs font-sans font-medium flex items-center gap-3 shadow-2xl backdrop-blur-md animate-fadeIn">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Full Screen Mode • Press <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-600 rounded text-[10px] font-mono text-emerald-300">Esc</kbd> to exit</span>
+                    <button
+                      onClick={toggleFullScreen}
+                      className="hover:bg-slate-800 text-slate-400 hover:text-white p-1 rounded-full transition-colors cursor-pointer"
+                      title="Exit Fullscreen"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
                 
                 {activeStage === "whiteboard" ? (
                   <Whiteboard
@@ -1409,14 +2314,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Secondary AI Summary helper for post-recap */}
-              <div className="pt-4 border-t border-slate-100">
-                <AIAssistant
-                  roomCode={roomCode}
-                  chatMessages={chatMessages}
-                  whiteboardActions={whiteboardHistory}
-                />
-              </div>
+
 
               {/* Action */}
               <div className="flex justify-center pt-6">
@@ -1445,6 +2343,74 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Quick Access Session QR Code Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-[10000] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center space-y-5 shadow-2xl relative">
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-all cursor-pointer"
+              title="Close Modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="space-y-1">
+              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-mono px-3 py-1 rounded-full font-bold uppercase tracking-wider inline-block">
+                Classroom QR Access
+              </span>
+              <h3 className="text-xl font-sans font-bold text-slate-900 pt-2">Scan to Join Live Session</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">Point your mobile camera at this QR code to join instantly without typing.</p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 inline-block shadow-inner">
+              <QRCodeSVG
+                value={`${window.location.origin}/?code=${roomCode}`}
+                size={200}
+                level="H"
+                includeMargin={true}
+                className="rounded-xl shadow-xs"
+              />
+            </div>
+
+            <div className="bg-slate-900 text-white p-3.5 rounded-2xl space-y-1 shadow-md">
+              <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">4-Digit Session Code</span>
+              <p className="text-3xl font-mono font-extrabold tracking-widest text-emerald-400">
+                {roomCode || "----"}
+              </p>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => {
+                  const url = `${window.location.origin}/?code=${roomCode}`;
+                  navigator.clipboard.writeText(url);
+                  showStreamToast("Direct join link copied to clipboard!");
+                }}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5" /> Copy Link
+              </button>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(roomCode);
+                  showStreamToast("4-digit session code copied!");
+                }}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <Clipboard className="w-3.5 h-3.5" /> Copy Code
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Camera Picture-in-Picture & Mic Testing Modals */}
+      {currentScreen === "classroom" && (
+        <CameraPipOverlay role={role} userName={userName} />
+      )}
+      <MicTestModal isOpen={isMicTestOpen} onClose={() => setIsMicTestOpen(false)} />
 
     </div>
   );

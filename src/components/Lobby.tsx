@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Camera, Mic, Volume2, Monitor, Play, CheckCircle } from "lucide-react";
+import { Camera, Mic, Volume2, Monitor, Play, CheckCircle, QrCode, Sliders } from "lucide-react";
+import MicTestModal from "./MicTestModal";
 
 interface LobbyProps {
   onJoin: (settings: {
@@ -10,14 +11,17 @@ interface LobbyProps {
   title: string;
   courseName: string;
   role: "EDUCATOR" | "STUDENT";
+  roomCode?: string;
+  onOpenQr?: () => void;
 }
 
-export default function Lobby({ onJoin, title, courseName, role }: LobbyProps) {
+export default function Lobby({ onJoin, title, courseName, role, roomCode, onOpenQr }: LobbyProps) {
   const [micEnabled, setMicEnabled] = useState(true);
   const [camEnabled, setCamEnabled] = useState(role === "EDUCATOR");
   const [qualityMode, setQualityMode] = useState<"detail" | "balanced" | "motion">("balanced");
   const [micLevel, setMicLevel] = useState(0);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [isMicTestOpen, setIsMicTestOpen] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -107,11 +111,31 @@ export default function Lobby({ onJoin, title, courseName, role }: LobbyProps) {
       <div className="w-full max-w-3xl bg-white border border-gray-100 rounded-3xl shadow-xl overflow-hidden">
         
         {/* Header Banner */}
-        <div className="bg-slate-900 text-white p-8 relative overflow-hidden">
-          <div className="absolute inset-0 bg-radial-at-t from-emerald-500/10 via-transparent to-transparent"></div>
-          <p className="text-emerald-400 font-mono text-xs uppercase tracking-widest mb-1">Pre-Class Lobby</p>
-          <h1 className="text-3xl font-sans font-medium tracking-tight text-white mb-2">{title}</h1>
-          <p className="text-slate-400 text-sm font-mono">{courseName} • Role: {role}</p>
+        <div className="bg-slate-900 text-white p-6 sm:p-8 relative overflow-hidden flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="relative z-10">
+            <div className="absolute inset-0 bg-radial-at-t from-emerald-500/10 via-transparent to-transparent pointer-events-none"></div>
+            <p className="text-emerald-400 font-mono text-xs uppercase tracking-widest mb-1">Pre-Class Lobby</p>
+            <h1 className="text-2xl sm:text-3xl font-sans font-medium tracking-tight text-white mb-1">{title}</h1>
+            <p className="text-slate-400 text-xs sm:text-sm font-mono">{courseName} • Role: {role}</p>
+          </div>
+          {roomCode && (
+            <div className="relative z-10 flex items-center gap-3 bg-slate-800/90 border border-slate-700/70 p-2.5 px-3.5 rounded-2xl backdrop-blur-md shadow-md">
+              <div>
+                <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400 block">4-Digit Session Code</span>
+                <span className="text-xl font-mono font-bold tracking-widest text-emerald-400">{roomCode}</span>
+              </div>
+              {onOpenQr && (
+                <button
+                  onClick={onOpenQr}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white p-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-semibold shadow-sm ml-1"
+                  title="View QR Code"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>QR Code</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Content Area */}
@@ -162,6 +186,14 @@ export default function Lobby({ onJoin, title, courseName, role }: LobbyProps) {
                   </div>
                 </div>
               </div>
+
+              <button
+                onClick={() => setIsMicTestOpen(true)}
+                className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-750 text-slate-100 rounded-xl font-sans text-xs font-semibold flex items-center justify-center gap-2 border border-slate-700 cursor-pointer shadow-sm transition-all"
+              >
+                <Sliders className="w-3.5 h-3.5 text-emerald-400" />
+                Test Voice Stream Microphone
+              </button>
 
               {/* Toggle Buttons */}
               <div className="flex gap-3">
@@ -280,6 +312,8 @@ export default function Lobby({ onJoin, title, courseName, role }: LobbyProps) {
         </div>
 
       </div>
+
+      <MicTestModal isOpen={isMicTestOpen} onClose={() => setIsMicTestOpen(false)} />
     </div>
   );
 }

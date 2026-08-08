@@ -1,5 +1,5 @@
 import React from "react";
-import { Users, UserX, VolumeX, Mic, MicOff, Check, X, Shield, Hand } from "lucide-react";
+import { Users, UserX, VolumeX, Mic, MicOff, Check, X, Shield, Hand, Mail, ShieldCheck } from "lucide-react";
 import { UserRole } from "../types";
 
 interface WaitingRoomAndParticipantsProps {
@@ -46,7 +46,16 @@ export default function WaitingRoomAndParticipants({ ws, role, participants, wai
           <div className="divide-y divide-amber-200/50 max-h-48 overflow-y-auto pr-1">
             {waitingRoom.map((w) => (
               <div key={w.id} className="flex justify-between items-center py-2.5">
-                <span className="text-xs font-sans font-medium text-amber-950">{w.name}</span>
+                <div className="space-y-0.5">
+                  <span className="text-xs font-sans font-semibold text-amber-950 block">{w.name}</span>
+                  {w.email && (
+                    <span className="text-[10px] text-amber-900/80 font-mono flex items-center gap-1">
+                      <Mail className="w-3 h-3 text-emerald-600" />
+                      {w.email}
+                      <ShieldCheck className="w-3 h-3 text-emerald-600" title="Security Verified" />
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-1.5">
                   <button
                     onClick={() => handleWaitingAction(w.id, "admit")}
@@ -79,6 +88,27 @@ export default function WaitingRoomAndParticipants({ ws, role, participants, wai
           <span className="bg-slate-100 text-slate-600 text-[10px] font-mono px-2 py-0.5 rounded-full font-medium">Live</span>
         </div>
 
+        {/* Simulated Audience Generation button (Educator-Only) */}
+        {role === "EDUCATOR" && !participants.some(p => p.id.startsWith("sim_")) && (
+          <button
+            onClick={() => {
+              if (ws) {
+                ws.send(JSON.stringify({ type: "simulate-audience" }));
+              }
+            }}
+            className="w-full bg-emerald-50 border border-emerald-200 hover:bg-emerald-100/50 text-emerald-800 font-sans font-semibold text-xs py-2.5 px-3 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs animate-pulse-subtle"
+          >
+            <Users className="w-4 h-4 text-emerald-600" />
+            Populate Simulated Class (20 Students)
+          </button>
+        )}
+
+        {role === "EDUCATOR" && (
+          <p className="text-[10px] text-slate-400 font-sans leading-relaxed border-b border-slate-100 pb-3">
+            <strong>Testing Tip:</strong> Standard browsers restrict concurrent connections to a single domain name to 6-7. To connect more than 7 *real* tabs/students on one machine, use incognito mode, distinct browser profiles, or separate external devices (phones/laptops).
+          </p>
+        )}
+
         <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
           {/* Always display the Educator at the top */}
           <div className="flex justify-between items-center p-2.5 rounded-xl bg-slate-50 border border-slate-100">
@@ -110,8 +140,13 @@ export default function WaitingRoomAndParticipants({ ws, role, participants, wai
                     <span className="absolute inset-0 bg-emerald-400 rounded-full animate-ping opacity-60"></span>
                   </div>
                   <div className="space-y-0.5">
-                    <span className="text-xs font-sans font-medium text-slate-800">{p.name}</span>
-                    <p className="text-[9px] text-slate-400 font-mono">Student ID: {p.id}</p>
+                    <span className="text-xs font-sans font-medium text-slate-800 flex items-center gap-1">
+                      {p.name}
+                      {p.email && <ShieldCheck className="w-3 h-3 text-emerald-600 inline" title="Verified School Email" />}
+                    </span>
+                    <p className="text-[9px] text-slate-400 font-mono">
+                      {p.email ? p.email : `Student ID: ${p.id}`}
+                    </p>
                   </div>
                 </div>
 

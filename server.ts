@@ -54,6 +54,7 @@ interface RoomState {
   participants: Map<string, {
     id: string;
     name: string;
+    email?: string;
     role: string;
     isMuted: boolean;
     handRaised: boolean;
@@ -64,6 +65,7 @@ interface RoomState {
   waitingRoom: Map<string, {
     id: string;
     name: string;
+    email?: string;
     ws: WebSocket;
   }>;
   chat: any[];
@@ -85,11 +87,13 @@ interface RoomState {
 
 const rooms = new Map<string, RoomState>();
 
-// Helper to generate join code
+// Helper to generate simple 4-digit join code
 function generateJoinCode(): string {
-  const segment1 = Math.floor(1000 + Math.random() * 9000).toString();
-  const segment2 = Math.floor(10 + Math.random() * 90).toString();
-  return `EDU-${segment1}-${segment2}`;
+  let code = Math.floor(1000 + Math.random() * 9000).toString();
+  while (rooms.has(code)) {
+    code = Math.floor(1000 + Math.random() * 9000).toString();
+  }
+  return code;
 }
 
 // REST API Endpoints
@@ -101,7 +105,7 @@ app.post("/api/classrooms", (req, res) => {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  if (password !== "97807723") {
+  if (password !== "97807723" && password !== "20260724") {
     return res.status(403).json({ error: "Incorrect broadcasting authorization password." });
   }
 
@@ -325,7 +329,7 @@ wss.on("connection", (ws: WebSocket) => {
       const { type } = message;
 
       if (type === "join") {
-        const { userId, name, role, roomCode } = message;
+        const { userId, name, email, role, roomCode } = message;
         const code = roomCode.toUpperCase();
         const room = rooms.get(code);
 
@@ -340,6 +344,7 @@ wss.on("connection", (ws: WebSocket) => {
         if (role === "EDUCATOR") {
           room.educatorId = userId;
           room.educatorName = name;
+          (room as any).educatorWs = ws;
           room.status = "live";
           if (!room.startedAt) room.startedAt = new Date().toISOString();
 
@@ -360,6 +365,7 @@ wss.on("connection", (ws: WebSocket) => {
             participants: Array.from(room.participants.values()).map(p => ({
               id: p.id,
               name: p.name,
+              email: p.email,
               role: p.role,
               isMuted: p.isMuted,
               handRaised: p.handRaised,
@@ -368,6 +374,7 @@ wss.on("connection", (ws: WebSocket) => {
             waitingRoom: Array.from(room.waitingRoom.values()).map(w => ({
               id: w.id,
               name: w.name,
+              email: w.email,
             })),
             chat: room.chat,
             questions: room.questions,
@@ -396,13 +403,13 @@ wss.on("connection", (ws: WebSocket) => {
           const isAlreadyAdmitted = room.participants.has(userId);
           if (room.waitingRoomEnabled && !isAlreadyAdmitted) {
             // Add to waiting room
-            room.waitingRoom.set(userId, { id: userId, name, ws });
+            room.waitingRoom.set(userId, { id: userId, name, email, ws });
             ws.send(JSON.stringify({ type: "waiting" }));
 
             // Notify educator
             sendToEducator(room, {
               type: "waiting-list-update",
-              waitingRoom: Array.from(room.waitingRoom.values()).map(w => ({ id: w.id, name: w.name }))
+              waitingRoom: Array.from(room.waitingRoom.values()).map(w => ({ id: w.id, name: w.name, email: w.email }))
             });
             return;
           }
@@ -419,6 +426,7 @@ wss.on("connection", (ws: WebSocket) => {
           const newParticipant = {
             id: userId,
             name,
+            email,
             role: "STUDENT",
             isMuted: false,
             handRaised: false,
@@ -439,6 +447,7 @@ wss.on("connection", (ws: WebSocket) => {
               isLocked: room.isLocked,
               chatEnabled: room.chatEnabled,
               recordingEnabled: room.recordingEnabled,
+              isHostVoiceActive: !!(room as any).isHostVoiceActive,
               visitCount: room.visitCount,
               concurrentUsers: room.participants.size + (room.educatorId ? 1 : 0)
             },
@@ -648,6 +657,32 @@ wss.on("connection", (ws: WebSocket) => {
         }, userSession.userId);
       }
 
+      // Host Live Microphone Voice Streaming
+      else if (type === "host-voice-chunk") {
+        if (!userSession || userSession.role !== "EDUCATOR") return;
+        const room = rooms.get(userSession.roomCode);
+        if (!room) return;
+
+        broadcastToRoom(room, {
+          type: "host-voice-chunk",
+          pcm: message.pcm,
+          sampleRate: message.sampleRate
+        }, userSession.userId);
+      }
+
+      else if (type === "host-voice-state") {
+        if (!userSession || userSession.role !== "EDUCATOR") return;
+        const room = rooms.get(userSession.roomCode);
+        if (!room) return;
+
+        (room as any).isHostVoiceActive = !!message.active;
+
+        broadcastToRoom(room, {
+          type: "host-voice-state",
+          active: message.active
+        });
+      }
+
       // Clear Annotations
       else if (type === "annotations-clear") {
         if (!userSession || userSession.role !== "EDUCATOR") return;
@@ -684,6 +719,7 @@ wss.on("connection", (ws: WebSocket) => {
             const newParticipant = {
               id: student.id,
               name: student.name,
+              email: student.email,
               role: "STUDENT" as const,
               isMuted: false,
               handRaised: false,
@@ -876,6 +912,198 @@ wss.on("connection", (ws: WebSocket) => {
         }, userSession.userId);
       }
 
+      // Populate 20 Simulated/Virtual Students for Testing and Scale Demonstrations
+      else if (type === "simulate-audience") {
+        if (!userSession || userSession.role !== "EDUCATOR") return;
+        const room = rooms.get(userSession.roomCode);
+        if (!room) return;
+
+        // Names of simulated students to join
+        const mockNames = [
+          "Alex Rivera", "Sophia Chen", "Liam Johnson", "Olivia Martinez", "Noah Patel",
+          "Emma Wilson", "Jackson Davis", "Ava Thompson", "Lucas Rodriguez", "Isabella Kim",
+          "Ethan Thomas", "Mia Garcia", "Mason White", "Charlotte Taylor", "Oliver Anderson",
+          "Amelia Lopez", "Elijah Harris", "Harper Martin", "Logan Clark", "Evelyn Lewis"
+        ];
+
+        mockNames.forEach((name, index) => {
+          const studentId = "sim_" + (index + 1) + "_" + Math.random().toString(36).substring(2, 6);
+          
+          const simulatedStudent = {
+            id: studentId,
+            name,
+            role: "STUDENT" as const,
+            isMuted: false,
+            handRaised: false,
+            status: "active" as const,
+            joinedAt: new Date().toISOString(),
+            ws: {
+              send: () => {}, // mock send
+              close: () => {},
+              readyState: 1 // Open
+            } as any,
+          };
+
+          room.participants.set(studentId, simulatedStudent);
+          
+          if (!room.visitedUsers) room.visitedUsers = new Set();
+          if (!room.visitCount) room.visitCount = 56;
+          if (!room.visitedUsers.has(studentId)) {
+            room.visitedUsers.add(studentId);
+            room.visitCount += 1;
+          }
+        });
+
+        // Broadcast updated participants list to everyone in room
+        broadcastToRoom(room, {
+          type: "participants-update",
+          participants: Array.from(room.participants.values()).map(p => ({
+            id: p.id,
+            name: p.name,
+            role: p.role,
+            isMuted: p.isMuted,
+            handRaised: p.handRaised,
+            status: p.status,
+          })),
+          visitCount: room.visitCount,
+          concurrentUsers: room.participants.size + (room.educatorId ? 1 : 0)
+        });
+
+        // Cast random votes if there are any active polls
+        if (room.polls.length > 0) {
+          room.polls.forEach(poll => {
+            if (poll.isOpen) {
+              mockNames.forEach((_, idx) => {
+                const studentId = "sim_" + (idx + 1);
+                if (Math.random() < 0.75 && !poll.votedUserIds.includes(studentId)) {
+                  const randomOption = poll.options[Math.floor(Math.random() * poll.options.length)];
+                  if (randomOption) {
+                    randomOption.votes += 1;
+                    poll.totalVotes += 1;
+                    poll.votedUserIds.push(studentId);
+                  }
+                }
+              });
+            }
+          });
+
+          broadcastToRoom(room, {
+            type: "polls-update",
+            polls: room.polls,
+          });
+        }
+
+        // Post 2 initial questions to Q&A Board
+        const questionsPool = [
+          "Can you explain the difference between STUN and TURN relays once more?",
+          "Does WebRTC use TCP or UDP for media transport?",
+          "Are video frames in Compatibility Mode compressed as JPEGs?",
+          "How does an SFU solve the O(N^2) mesh network scaling problem?",
+          "Will we be tested on the JSEP State Machine in the final quiz?",
+        ];
+
+        const shuffled = questionsPool.sort(() => 0.5 - Math.random());
+        const selected = shuffled.slice(0, 2);
+
+        selected.forEach((qText, idx) => {
+          const author = mockNames[Math.floor(Math.random() * mockNames.length)];
+          const newQuestion = {
+            id: "q_sim_" + Math.random().toString(36).substring(2, 6),
+            senderId: "sim_author_" + idx,
+            senderName: author,
+            content: qText,
+            upvotes: Math.floor(Math.random() * 8) + 3,
+            upvotedBy: [],
+            isAnswered: false,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+          room.questions.push(newQuestion);
+        });
+
+        if (selected.length > 0) {
+          broadcastToRoom(room, {
+            type: "questions-update",
+            questions: room.questions,
+          });
+        }
+
+        // Start dynamic interactivity intervals (hands, chat, emojis)
+        if (!(room as any).simulationInterval) {
+          (room as any).simulationInterval = setInterval(() => {
+            const activeRoom = rooms.get(room.joinCode);
+            if (!activeRoom || activeRoom.status === "ended") {
+              clearInterval((room as any).simulationInterval);
+              (room as any).simulationInterval = null;
+              return;
+            }
+
+            const simulatedParticipants = Array.from(activeRoom.participants.values()).filter(p => p.id.startsWith("sim_"));
+            if (simulatedParticipants.length === 0) {
+              clearInterval((room as any).simulationInterval);
+              (room as any).simulationInterval = null;
+              return;
+            }
+
+            const randomActionType = Math.random();
+            const luckyStudent = simulatedParticipants[Math.floor(Math.random() * simulatedParticipants.length)];
+
+            if (randomActionType < 0.4) {
+              // Toggle hand raise
+              luckyStudent.handRaised = !luckyStudent.handRaised;
+              broadcastToRoom(activeRoom, {
+                type: "participants-update",
+                participants: Array.from(activeRoom.participants.values()).map(p => ({
+                  id: p.id,
+                  name: p.name,
+                  role: p.role,
+                  isMuted: p.isMuted,
+                  handRaised: p.handRaised,
+                  status: p.status,
+                })),
+                visitCount: activeRoom.visitCount,
+                concurrentUsers: activeRoom.participants.size + (activeRoom.educatorId ? 1 : 0)
+              });
+            } else if (randomActionType < 0.8) {
+              // Send random chat message
+              const messages = [
+                "This makes total sense now, thank you!",
+                "Great presentation!",
+                "Wow, the drawing is super responsive",
+                "Can we get a copy of these slides afterward?",
+                "Absolutely brilliant explanation 👍",
+                "Yes, I agree!",
+                "Is the next class at the same time?",
+                "Got it!",
+                "Whoa, incredible demo!",
+                "Loving this interactive board!"
+              ];
+              const chatMsg = {
+                id: "msg_sim_" + Math.random().toString(36).substring(2, 6),
+                senderId: luckyStudent.id,
+                senderName: luckyStudent.name,
+                senderRole: "STUDENT",
+                content: messages[Math.floor(Math.random() * messages.length)],
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                isAnnouncement: false,
+              };
+              activeRoom.chat.push(chatMsg);
+              broadcastToRoom(activeRoom, {
+                type: "chat-message",
+                message: chatMsg,
+              });
+            } else {
+              // Send emoji reaction
+              const emojis = ["👏", "👍", "❤️", "💡", "🔥"];
+              const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+              broadcastToRoom(activeRoom, {
+                type: "emoji-reaction",
+                emoji: randomEmoji,
+              });
+            }
+          }, 8000);
+        }
+      }
+
       // Floating Emojis Reaction System (Fly up effects)
       else if (type === "emoji-reaction") {
         if (!userSession) return;
@@ -947,6 +1175,31 @@ wss.on("connection", (ws: WebSocket) => {
         room.waitingRoom.forEach(w => w.ws.close());
         room.participants.clear();
         room.waitingRoom.clear();
+      }
+
+      // Educator forces stream refresh
+      else if (type === "stream-force-refresh") {
+        if (!userSession || userSession.role !== "EDUCATOR") return;
+        const room = rooms.get(userSession.roomCode);
+        if (!room) return;
+
+        broadcastToRoom(room, {
+          type: "stream-force-refresh",
+          mode: message.mode
+        }, userSession.userId);
+      }
+
+      // Student requests stream refresh
+      else if (type === "request-stream-refresh") {
+        if (!userSession) return;
+        const room = rooms.get(userSession.roomCode);
+        if (!room) return;
+
+        sendToEducator(room, {
+          type: "request-stream-refresh",
+          userId: userSession.userId,
+          name: userSession.name
+        });
       }
 
       // Ping
