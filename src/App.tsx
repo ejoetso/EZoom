@@ -47,6 +47,7 @@ import PollsManager from "./components/PollsManager";
 import MicTestModal from "./components/MicTestModal";
 import CameraPipOverlay from "./components/CameraPipOverlay";
 import AIAssistant from "./components/AIAssistant";
+import ProductLandingPage from "./components/ProductLandingPage";
 
 // Unique ID Generator
 function generateId(): string {
@@ -1578,6 +1579,10 @@ export default function App() {
 
   const directJoinUrl = `${joinBaseUrl}/?code=${encodeURIComponent(roomCode)}`;
 
+  if (window.location.pathname === "/about") {
+    return <ProductLandingPage />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
       
@@ -1882,6 +1887,7 @@ export default function App() {
               <div className="flex flex-wrap justify-center gap-2">
                 <a href="/demo/EZoom-demo.mp4" download className="rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-800">Download Demo</a>
                 <a href="https://github.com/ejoetso/EZoom/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noreferrer" className="rounded-xl border border-emerald-300 bg-white px-4 py-2.5 text-xs font-bold text-emerald-800 transition-colors hover:bg-emerald-100">Open User Guide</a>
+                <a href="/about" className="rounded-xl border border-emerald-300 bg-white px-4 py-2.5 text-xs font-bold text-emerald-800 transition-colors hover:bg-emerald-100">Project Overview</a>
               </div>
             </div>
           </section>
