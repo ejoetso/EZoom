@@ -9,6 +9,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import fs from "fs";
 import crypto from "crypto";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 dotenv.config();
 
@@ -88,7 +89,9 @@ app.post("/api/license/activate", (req, res) => {
   res.json(getLicenseStatus());
 });
 
-function requireActiveLicense(_req: express.Request, res: express.Response, next: express.NextFunction) {
+function requireActiveLicense(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const session = getSession(req);
+  if (session?.provider === "apple") return next();
   const status = getLicenseStatus();
   if (!status.active) return res.status(402).json({ error: status.status === "expired" ? "The 30-day EZoom trial has expired." : "Activate this EZoom installation with a trial licence key.", license: status });
   next();
@@ -276,10 +279,10 @@ function verifyPassword(password: string, account: RegisteredAccount) {
   const expected = Buffer.from(account.passwordHash, "hex");
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
 }
-const educatorSessions = new Map<string, { email: string; expiresAt: number }>();
-function issueSession(email: string) {
+const educatorSessions = new Map<string, { email: string; expiresAt: number; provider?: "apple" }>();
+function issueSession(email: string, provider?: "apple") {
   const token = crypto.randomBytes(32).toString("hex");
-  educatorSessions.set(crypto.createHash("sha256").update(token).digest("hex"), { email, expiresAt: Date.now() + 7 * 86400000 });
+  educatorSessions.set(crypto.createHash("sha256").update(token).digest("hex"), { email, expiresAt: Date.now() + 7 * 86400000, provider });
   return token;
 }
 function getSessionByToken(token: string) {
@@ -295,11 +298,92 @@ function getSession(req: express.Request) {
   return token ? getSessionByToken(token) : null;
 }
 function publicAccount(email: string) {
+  const apple = [...appleAccounts.values()].find((account) => account.email === email);
+  if (apple) return { email, name: apple.name, accountType: "user" as const, maxDurationMinutes: LIMITED_SESSION_MINUTES };
   const registered = registeredAccounts.get(email);
   if (registered) return { email, name: registered.name, accountType: "user" as const, maxDurationMinutes: LIMITED_SESSION_MINUTES };
   const builtIn = educatorAccounts.get(email);
   return builtIn ? { email, name: "", accountType: builtIn.accountType, maxDurationMinutes: builtIn.maxDurationMinutes } : null;
 }
+
+interface AppleAccount { subject: string; email: string; name: string; createdAt: string; }
+const appleAccountsPath = path.join(licenseDataDirectory, "apple-accounts.json");
+const appleAccounts = new Map<string, AppleAccount>();
+try {
+  const records = JSON.parse(fs.readFileSync(appleAccountsPath, "utf8"));
+  if (Array.isArray(records)) for (const record of records) if (record.subject && record.email) appleAccounts.set(record.subject, record);
+} catch (error: any) { if (error.code !== "ENOENT") throw error; }
+const appleChallenges = new Map<string, number>();
+const appleKeys = createRemoteJWKSet(new URL("https://appleid.apple.com/auth/keys"));
+async function verifyAppleIdentity(idToken: string, nonce: string) {
+  if (!/^[a-f0-9]{64}$/.test(nonce) || !appleChallenges.has(nonce) || appleChallenges.get(nonce)! < Date.now()) throw new Error("Apple sign-in expired.");
+  appleChallenges.delete(nonce);
+  const { payload } = await jwtVerify(idToken, appleKeys, {
+    issuer: "https://appleid.apple.com", audience: "com.ezoom.education", algorithms: ["RS256"],
+  });
+  if (payload.nonce !== nonce || !payload.sub || typeof payload.email !== "string" || payload.email_verified !== "true" && payload.email_verified !== true) throw new Error("Invalid Apple identity.");
+  return { subject: String(payload.sub), email: payload.email.toLowerCase() };
+}
+app.post("/api/educator/apple/challenge", limitAuthAttempts, (_req, res) => {
+  const now = Date.now();
+  for (const [key, expiry] of appleChallenges) if (expiry < now) appleChallenges.delete(key);
+  const nonce = crypto.randomBytes(32).toString("hex");
+  appleChallenges.set(nonce, now + 5 * 60000);
+  res.json({ nonce });
+});
+
+app.post("/api/educator/apple", limitAuthAttempts, async (req, res) => {
+  const nonce = String(req.body.nonce || "");
+  try {
+    const { subject, email } = await verifyAppleIdentity(String(req.body.idToken || ""), nonce);
+    const existing = appleAccounts.get(subject);
+    if (existing && existing.email !== email) return res.status(409).json({ error: "Apple account email changed. Contact support." });
+    if (!existing && (educatorAccounts.has(email) || registeredAccounts.has(email) || [...appleAccounts.values()].some((account) => account.email === email))) {
+      return res.status(409).json({ error: "This email is already used by another educator account. Contact support to link it." });
+    }
+    if (!existing) {
+      const suppliedName = String(req.body.name || "").trim().slice(0, 100);
+      const account: AppleAccount = { subject, email, name: suppliedName.length >= 2 ? suppliedName : "Educator", createdAt: new Date().toISOString() };
+      appleAccounts.set(subject, account);
+      try {
+        fs.mkdirSync(licenseDataDirectory, { recursive: true });
+        const temporaryPath = `${appleAccountsPath}.${process.pid}.tmp`;
+        fs.writeFileSync(temporaryPath, JSON.stringify([...appleAccounts.values()], null, 2), { mode: 0o600 });
+        fs.renameSync(temporaryPath, appleAccountsPath);
+      } catch {
+        appleAccounts.delete(subject);
+        return res.status(500).json({ error: "Could not save your account. Please try again." });
+      }
+    }
+    res.json({ ...publicAccount(email), token: issueSession(email, "apple") });
+  } catch {
+    res.status(401).json({ error: "Apple sign-in could not be verified." });
+  }
+});
+
+app.delete("/api/educator/apple/account", limitAuthAttempts, async (req, res) => {
+  const session = getSession(req);
+  if (!session || session.provider !== "apple") return res.status(401).json({ error: "Sign in again to delete this account." });
+  try {
+    const { subject, email } = await verifyAppleIdentity(String(req.body.idToken || ""), String(req.body.nonce || ""));
+    if (email !== session.email || appleAccounts.get(subject)?.email !== email) return res.status(403).json({ error: "Apple account does not match the signed-in account." });
+    const account = appleAccounts.get(subject)!;
+    appleAccounts.delete(subject);
+    try {
+      fs.mkdirSync(licenseDataDirectory, { recursive: true });
+      const temporaryPath = `${appleAccountsPath}.${process.pid}.tmp`;
+      fs.writeFileSync(temporaryPath, JSON.stringify([...appleAccounts.values()], null, 2), { mode: 0o600 });
+      fs.renameSync(temporaryPath, appleAccountsPath);
+    } catch {
+      appleAccounts.set(subject, account);
+      return res.status(500).json({ error: "Could not delete the account. Please try again." });
+    }
+    for (const [key, value] of educatorSessions) if (value.email === email) educatorSessions.delete(key);
+    res.status(204).end();
+  } catch {
+    res.status(401).json({ error: "Apple identity could not be verified." });
+  }
+});
 
 const superadminEmail = process.env.SUPERADMIN_EMAIL?.trim().toLowerCase();
 const superadminPassword = process.env.SUPERADMIN_PASSWORD;

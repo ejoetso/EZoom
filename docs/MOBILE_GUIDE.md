@@ -27,7 +27,7 @@ The iOS project can be generated and updated on Windows, but it must be compiled
 The native application identifier is `com.ezoom.education` and the display name is **EZoom**.
 The iOS app icon and launch image use the EZoom teal monitor design rather than Capacitor placeholders.
 
-Apple setup (14 October 2026): App ID `com.ezoom.education` is registered under team `B7W9JEQ9XA`. The [EZoom App Store Connect record](https://appstoreconnect.apple.com/apps/6822637486/distribution) exists with SKU `EZOOM-IOS-001`, and the `EZoom Internal Testers` TestFlight group exists with automatic distribution disabled. There are no builds or testers yet. The Xcode project uses automatic signing with that team ID.
+Apple setup (15 October 2026): App ID `com.ezoom.education` is registered under team `B7W9JEQ9XA`. The [EZoom App Store Connect record](https://appstoreconnect.apple.com/apps/6822637486/distribution) exists with SKU `EZOOM-IOS-001`. Build 1.0 (1) is testing in the `EZoom Internal Testers` group, which includes `ejoetso@ymail.com`. The Xcode project uses automatic signing with that team ID. Build 1.0 (2), which adds Sign in with Apple, is not distributed until its App ID capability and new archive are verified.
 
 Google Cloud setup (14 October 2026): project `ezoom-mobile-backend` (number `960852938301`) was created under `joe.tso@gmail.com`, but no billing account was linked and no Cloud Run service was deployed. Paid Render hosting was considered but not selected. For iPhone testing, the EZoom server on this PC is exposed through Tailscale Funnel at `https://laptop-iahsqh9b.tail29118b.ts.net`. HTTPS health, licence-status, privacy-page, and WebSocket checks passed on 14 October 2026. The PC, Tailscale service, Funnel, and EZoom server must remain running for the app to work; this is a testing setup, not a durable cloud deployment. Tailscale's free Personal plan is for non-commercial use; arrange an appropriate hosted service before commercial distribution.
 
@@ -77,7 +77,8 @@ In Xcode:
 2. Choose your Apple development team.
 3. Confirm the bundle identifier `com.ezoom.education` is available to your account.
 4. Select an iPhone simulator or connected device.
-5. Run the app and approve camera and microphone access.
+5. Enable **Sign in with Apple** for the `com.ezoom.education` App ID in Apple Developer Certificates, Identifiers & Profiles before signing Build 2.
+6. Run the app and approve camera and microphone access.
 
 The project contains the required `NSCameraUsageDescription` and `NSMicrophoneUsageDescription` entries. Use **Product → Archive** for TestFlight or App Store submission.
 
@@ -115,6 +116,10 @@ The workflow and export settings are prepared but have not been run or validated
 The server permits API requests from Capacitor's local origin. Ensure the same backend is used by the web and native apps so room codes and accounts work across devices. Registered accounts are saved under `LICENSE_DATA_DIR`; production deployments need a durable, backed-up volume. Ephemeral container storage will lose accounts on restart.
 
 ## Account flow
+
+For the iOS release, educators select **Continue with Apple**. Apple may provide a private relay email. The server verifies Apple's identity token, creates the educator account on first sign-in, and allows 60-minute sessions without an installation activation key. The Apple account can be deleted in the iOS app after reauthentication. iOS builds must set `VITE_EZOOM_IOS=1`; the TestFlight workflow does this automatically. The backend must include `/api/educator/apple/challenge` and `/api/educator/apple` before distributing the build. Web and Android keep the existing licence-key and email/password flow.
+
+For web and Android:
 
 1. On the educator portal, choose **Create account**.
 2. Enter a name, email, and password of at least 12 characters, then confirm it.

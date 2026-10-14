@@ -47,7 +47,7 @@ import PollsManager from "./components/PollsManager";
 import MicTestModal from "./components/MicTestModal";
 import CameraPipOverlay from "./components/CameraPipOverlay";
 import AIAssistant from "./components/AIAssistant";
-import { apiBase, apiUrl, hasNativeApi, isNative, websocketUrl } from "./api";
+import { apiBase, apiUrl, hasNativeApi, isNative, isIosRelease, websocketUrl } from "./api";
 
 // Unique ID Generator
 function generateId(): string {
@@ -134,6 +134,12 @@ export default function App() {
       return;
     }
     try {
+      if (isIosRelease) {
+        const response = await fetch(apiUrl("/api/health"));
+        if (!response.ok) throw new Error("EZoom server unavailable");
+        setLicenseStatus({ active: true, status: "ios_account" });
+        return;
+      }
       const response = await fetch(apiUrl("/api/license/status"));
       if (!response.ok) throw new Error("EZoom server unavailable");
       const status = await response.json();
@@ -617,6 +623,63 @@ export default function App() {
       setEducatorAuthenticated(true);
     } catch (err: any) {
       setEducatorError(err.message || "Account request failed.");
+    } finally {
+      setAccountActionBusy(false);
+    }
+  };
+
+  const handleAppleSignIn = async () => {
+    setEducatorError(null);
+    setAccountActionBusy(true);
+    try {
+      const challengeResponse = await fetch(apiUrl("/api/educator/apple/challenge"), { method: "POST" });
+      if (!challengeResponse.ok) throw new Error("Could not begin Apple sign-in.");
+      const { nonce } = await challengeResponse.json();
+      const { AppleSignIn, SignInScope } = await import("@capawesome/capacitor-apple-sign-in");
+      const identity = await AppleSignIn.signIn({ scopes: [SignInScope.Email, SignInScope.FullName], nonce });
+      const name = [identity.givenName, identity.familyName].filter(Boolean).join(" ");
+      const response = await fetch(apiUrl("/api/educator/apple"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nonce, idToken: identity.idToken, name }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Apple sign-in failed.");
+      setEducatorEmail(data.email);
+      setEducatorAccountType(data.accountType);
+      setEducatorToken(data.token);
+      sessionStorage.setItem("ezoom_educator_token", data.token);
+      if (data.name) setUserName(data.name);
+      setEducatorAuthenticated(true);
+    } catch (error: any) {
+      setEducatorError(error.message || "Apple sign-in failed. Please try again.");
+    } finally {
+      setAccountActionBusy(false);
+    }
+  };
+
+  const deleteAppleAccount = async () => {
+    if (!window.confirm("Permanently delete your EZoom educator account? This cannot be undone.")) return;
+    setEducatorError(null);
+    setAccountActionBusy(true);
+    try {
+      const challengeResponse = await fetch(apiUrl("/api/educator/apple/challenge"), { method: "POST" });
+      if (!challengeResponse.ok) throw new Error("Could not verify your Apple Account.");
+      const { nonce } = await challengeResponse.json();
+      const { AppleSignIn } = await import("@capawesome/capacitor-apple-sign-in");
+      const identity = await AppleSignIn.signIn({ nonce });
+      const response = await fetch(apiUrl("/api/educator/apple/account"), {
+        method: "DELETE", headers: { "Content-Type": "application/json", Authorization: `Bearer ${educatorToken}` },
+        body: JSON.stringify({ nonce, idToken: identity.idToken }),
+      });
+      if (!response.ok) throw new Error((await response.json()).error || "Could not delete your account.");
+      sessionStorage.removeItem("ezoom_educator_token");
+      setEducatorToken("");
+      setEducatorAuthenticated(false);
+      setEducatorAccountType(null);
+      setEducatorEmail("");
+      setShowDeleteAccount(false);
+    } catch (error: any) {
+      setEducatorError(error.message || "Could not delete your account.");
     } finally {
       setAccountActionBusy(false);
     }
@@ -1700,7 +1763,7 @@ export default function App() {
     );
   }
 
-  if (!licenseStatus.active) {
+  if (!licenseStatus.active && !isIosRelease) {
     const isExpired = licenseStatus.status === "expired";
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
@@ -1826,7 +1889,8 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-4 text-xs">
                   <button type="button" onClick={signOutEducator} className="text-slate-600 underline">Sign out</button>
-                  {educatorAccountType === "user" && <button type="button" onClick={() => { setShowDeleteAccount(!showDeleteAccount); setEducatorError(null); }} className="text-red-700 underline">Delete account</button>}
+                  {educatorAccountType === "user" && !isIosRelease && <button type="button" onClick={() => { setShowDeleteAccount(!showDeleteAccount); setEducatorError(null); }} className="text-red-700 underline">Delete account</button>}
+                  {educatorAccountType === "user" && isIosRelease && <button type="button" onClick={deleteAppleAccount} disabled={accountActionBusy} className="text-red-700 underline disabled:opacity-50">Delete account</button>}
                 </div>
                 {showDeleteAccount && educatorAccountType === "user" && (
                   <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
@@ -1869,7 +1933,12 @@ export default function App() {
                 </button>
               </form>
               ) : (
-              <form onSubmit={handleEducatorLogin} autoComplete="off" className="space-y-4 pt-4">
+              isIosRelease ? <div className="space-y-4 pt-4">
+                {educatorError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">{educatorError}</p>}
+                <button type="button" onClick={handleAppleSignIn} disabled={accountActionBusy} className="w-full rounded-xl bg-slate-900 px-5 py-3.5 text-sm font-semibold text-white disabled:opacity-50">{accountActionBusy ? "Signing in…" : "Continue with Apple"}</button>
+                <p className="text-center text-xs text-slate-500">Sign up or sign in with your Apple Account. Educator sessions are limited to 60 minutes. No activation key is needed in the iPhone app.</p>
+                <p className="text-center text-xs text-slate-500">By continuing, you acknowledge the <a href="/privacy.html" target="_blank" rel="noreferrer" className="underline">privacy notice</a>.</p>
+              </div> : <form onSubmit={handleEducatorLogin} autoComplete="off" className="space-y-4 pt-4">
                 {educatorError && (
                   <div className="bg-red-50 border border-red-200 text-red-800 p-3.5 rounded-xl text-xs flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" /> <span>{educatorError}</span>

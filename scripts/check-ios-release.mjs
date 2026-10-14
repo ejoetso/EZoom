@@ -6,6 +6,7 @@ const apiBase = (process.env.VITE_EZOOM_API_URL || "").trim().replace(/\/$/, "")
 const errors = [];
 
 if (!apiBase.startsWith("https://")) errors.push("VITE_EZOOM_API_URL must name the deployed HTTPS EZoom API; no default server is used for iOS releases.");
+if (process.env.VITE_EZOOM_IOS !== "1") errors.push("VITE_EZOOM_IOS=1 is required for the iOS-only Apple sign-in experience.");
 
 const iconPath = path.join(root, "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-EZoom-1024.png");
 if (!fs.existsSync(iconPath)) errors.push("Branded 1024px app icon is missing.");
@@ -15,6 +16,8 @@ else {
 }
 
 const plist = fs.readFileSync(path.join(root, "ios/App/App/Info.plist"), "utf8");
+const entitlements = fs.readFileSync(path.join(root, "ios/App/App/App.entitlements"), "utf8");
+if (!entitlements.includes("com.apple.developer.applesignin")) errors.push("Sign in with Apple entitlement is missing.");
 for (const key of ["NSCameraUsageDescription", "NSMicrophoneUsageDescription"]) {
   if (!plist.includes(`<key>${key}</key>`)) errors.push(`${key} is missing from Info.plist.`);
 }
@@ -32,6 +35,13 @@ for (const [endpoint, expected] of apiBase.startsWith("https://") ? [["/api/heal
   } catch {
     errors.push(`${endpoint} is unavailable or does not return JSON at ${apiBase}.`);
   }
+}
+if (apiBase.startsWith("https://")) {
+  try {
+    const response = await fetch(`${apiBase}/api/educator/apple/challenge`, { method: "POST", signal: AbortSignal.timeout(15000) });
+    const data = await response.json();
+    if (!response.ok || !/^[a-f0-9]{64}$/.test(data.nonce || "")) errors.push("The EZoom backend does not support iOS Apple sign-in yet.");
+  } catch { errors.push("The iOS Apple sign-in endpoint is unavailable."); }
 }
 
 if (errors.length) {
