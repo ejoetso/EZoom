@@ -2,6 +2,9 @@ name: EZoom iOS TestFlight
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ejoe/ios-testflight
 
 permissions:
   contents: read
