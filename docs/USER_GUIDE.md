@@ -8,23 +8,22 @@ The landing page separates student entry from educator authentication. Commercia
 
 ![EZoom landing page](screenshots/01-landing.png)
 
-## 2. Sign in as a trial educator
+## 2. Create a trial educator account
 
-Use the public trial account:
+New educator accounts can host 60-minute meetings. Choose **Create account** in the educator portal, then enter:
 
-- Email: `trial@ezoom.com`
-- Password: `trial@123`
-- Meeting allowance: 30 minutes
+- Your name and email address
+- A password of at least 12 characters, entered twice
 
-To use the trial login:
+To start a trial meeting:
 
-1. Open EZoom and select **Educator Sign In**.
-2. Enter `trial@ezoom.com` in the email field.
-3. Enter `trial@123` in the password field.
-4. Select **Sign In**.
-5. Enter your display name and meeting details, then create a session.
-6. Check your camera and microphone in the lobby and select **Launch & Start Session**.
-7. Share the session code or QR code with students. The trial meeting ends automatically after 30 minutes.
+1. Open EZoom and select **Create account**.
+2. Enter your details and select **Create educator account**.
+3. Enter your meeting details, then create a session.
+4. Check your camera and microphone in the lobby and select **Launch & Start Session**.
+5. Share the session code or QR code with students. The meeting ends automatically after 60 minutes.
+
+You can sign out in the educator panel. To delete your account, select **Delete account** and confirm with your password.
 
 ![Educator trial sign-in](screenshots/02-educator-sign-in.png)
 

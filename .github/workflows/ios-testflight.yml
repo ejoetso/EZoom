@@ -1,0 +1,63 @@
+name: EZoom iOS TestFlight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: macos-latest
+    env:
+      VITE_EZOOM_API_URL: ${{ vars.EZOOM_API_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify Xcode version
+        run: |
+          xcodebuild -version
+          test "$(xcodebuild -version | awk '/Xcode/{print $2}' | cut -d. -f1)" -ge 26
+      - name: Build and validate EZoom
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+          npx cap sync ios
+          npm run ios:check
+      - name: Archive and upload to App Store Connect
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.EZOOM_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.EZOOM_ASC_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.EZOOM_ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          : "${ASC_KEY_ID:?Missing EZOOM_ASC_KEY_ID}"
+          : "${ASC_ISSUER_ID:?Missing EZOOM_ASC_ISSUER_ID}"
+          : "${ASC_KEY_BASE64:?Missing EZOOM_ASC_KEY_BASE64}"
+          key_dir="$(mktemp -d)"
+          trap 'rm -rf "$key_dir"' EXIT
+          printf '%s' "$ASC_KEY_BASE64" | base64 -D > "$key_dir/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$key_dir/AuthKey_${ASC_KEY_ID}.p8"
+          xcodebuild archive \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/EZoom.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$key_dir/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/EZoom.xcarchive" \
+            -exportPath "$RUNNER_TEMP/EZoom-export" \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$key_dir/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"

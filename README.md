@@ -32,31 +32,29 @@ Copyright © 2026 Ejoe Tso. All rights reserved.
 
 This repository is provided for evaluation and authorized deployment only. No license is granted to copy, redistribute, sell, sublicense, or create derivative commercial products without written permission from Ejoe Tso. Contact **eozoe2025@gmail.com** for commercial use, education licensing, deployment rights, or collaboration.
 
-## Public trial account
+## Trial educator access
 
-Anyone may evaluate EZoom locally using the trial educator account:
+Anyone may evaluate EZoom by creating an educator account in the app. New accounts can host 60-minute meetings. Students join by session code without registering.
 
-- Email: `trial@ezoom.com`
-- Password: `trial@123`
-- Meeting duration: 30 minutes
+Operators can optionally configure a shared trial educator account with `TRIAL_EMAIL` and `TRIAL_PASSWORD`. Do not use public default credentials on a production deployment.
 
 ### How to use the trial educator login
 
-1. Open EZoom and select **Educator Sign In**.
-2. Sign in with `trial@ezoom.com` and password `trial@123`.
+1. Open EZoom and select **Create account** in the educator portal.
+2. Enter your name, email, and a password of at least 12 characters.
 3. Enter your educator display name, meeting title, and optional course name.
 4. Choose the waiting-room and chat settings, then create the session.
 5. Confirm the camera and microphone in the device lobby.
 6. Launch the meeting and share the four-digit session code or QR code with students.
 7. Students join from the landing page using their name, email, session code, and the answer to the displayed math question.
 
-The trial educator account is limited to 30 minutes per meeting.
+Self-registered and shared trial educator accounts are limited to 60 minutes per meeting.
 
-The 30-minute limit is enforced by the server and starts when the educator launches the meeting. Students do not need an account. They join with their name, email, four-digit session code, and the math security answer shown on the landing page.
+The 60-minute limit is enforced by the server and starts when the educator launches the meeting. Students do not need an account. They join with their name, email, four-digit session code, and the math security answer shown on the landing page.
 
 ## 30-day deployment trial activation
 
-A new local or Docker deployment must be activated with an authorised `EZTRIAL-...` licence key before the application is unlocked. The first successful activation creates `data/license.json` and begins an immutable 30-day evaluation period. The public trial educator account remains limited to 30 minutes per meeting during that period.
+A new local or Docker deployment must be activated with an authorised `EZTRIAL-...` licence key before the application is unlocked. The first successful activation creates `data/license.json` and begins an immutable 30-day evaluation period. Educator sessions remain limited to 60 minutes during that period.
 
 Licence keys are distributed separately and are never committed to this public repository. For a trial key, self-hosted licence, cloud licence, or education-institute free licence, email **eozoe2025@gmail.com**.
 
@@ -67,7 +65,7 @@ Administrator credentials are intentionally excluded from source control and doc
 ## Capabilities
 
 - Separate educator authentication and student entry
-- Unlimited superadmin meetings and server-enforced 30-minute trial meetings
+- Unlimited superadmin meetings and server-enforced 60-minute trial meetings
 - Four-digit room codes, QR join links, and a math security check
 - Waiting-room approval and classroom locking
 - Educator camera broadcasting with synchronized camera on/off state
@@ -137,6 +135,17 @@ npm run build
 npm start
 ```
 
+## Android and iOS apps
+
+EZoom includes Capacitor projects for Android and iOS under `android/` and `ios/`. The native apps connect to the secure EZoom cloud deployment and include camera and microphone permissions for live classrooms.
+
+```bash
+npm run mobile:sync
+npm run mobile:android
+```
+
+Use `npm run mobile:ios` on macOS to open the iOS project in Xcode. See the complete [Android and iOS implementation guide](docs/MOBILE_GUIDE.md) for SDK requirements, device testing, signing, and store-release instructions.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and adjust these variables:
@@ -147,9 +156,8 @@ Copy `.env.example` to `.env` and adjust these variables:
 | `GEMINI_API_KEY` | Optional Gemini API key for AI notes and quizzes | empty |
 | `SUPERADMIN_EMAIL` | Unlimited administrator login | required secret |
 | `SUPERADMIN_PASSWORD` | Unlimited administrator password | required secret |
-| `TRIAL_EMAIL` | Public trial educator login | `trial@ezoom.com` |
-| `TRIAL_PASSWORD` | Public trial educator password | `trial@123` |
-| `TRIAL_DURATION_MINUTES` | Trial meeting duration | `30` |
+| `TRIAL_EMAIL` | Optional shared trial educator login | unset |
+| `TRIAL_PASSWORD` | Optional shared trial educator password | unset |
 | `LICENSE_DATA_DIR` | Persistent activation state directory | `data` locally, `/app/data` in Docker |
 
 Never commit a real `.env` file. It is excluded by `.gitignore` and `.dockerignore`.

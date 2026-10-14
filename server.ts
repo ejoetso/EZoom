@@ -17,8 +17,20 @@ const server = http.createServer(app);
 const PORT = Number(process.env.PORT || 3000);
 
 app.use(express.json({ limit: "10mb" }));
+app.use("/api", (req, res, next) => {
+  const origin = req.header("Origin");
+  if (origin === "capacitor://localhost" || origin === "http://localhost") {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Vary", "Origin");
+    res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  }
+  if (req.method === "OPTIONS") return res.status(204).end();
+  next();
+});
 
 const TRIAL_DAYS = 30;
+const LIMITED_SESSION_MINUTES = 60;
 const TRIAL_KEY_HASHES = new Set([
   "7bf1565369bc8dcb48ea5e19e5d70cb68a8619ab5200406fedd847b728d9d6eb", "b72f3066dbbc40fd66cf4f987496d33079d49c48e687633d93b2d08ad3cf31a6",
   "433d06eb2fe3c3f15a4fb823047b45dcd6f2cfe20404417f954f45c41bb77297", "5b4bb13ff269770144a74d8df0b53e77b503c89d968b592c7a49c546ca8bb9d9",
@@ -169,7 +181,7 @@ interface RoomState {
   educatorId: string;
   educatorName: string;
   educatorEmail: string;
-  accountType: "superadmin" | "trial";
+  accountType: "superadmin" | "trial" | "user";
   maxDurationMinutes: number | null;
   expiresAt?: string;
   isLocked: boolean;
@@ -225,6 +237,70 @@ const educatorAccounts = new Map<string, {
   maxDurationMinutes: number | null;
 }>();
 
+interface RegisteredAccount { email: string; name: string; salt: string; passwordHash: string; createdAt: string; }
+const accountsPath = path.join(licenseDataDirectory, "accounts.json");
+function loadRegisteredAccounts(): Map<string, RegisteredAccount> {
+  try {
+    const records = JSON.parse(fs.readFileSync(accountsPath, "utf8"));
+    if (!Array.isArray(records)) throw new Error("Invalid account data");
+    return new Map(records.map((record: RegisteredAccount) => [record.email, record]));
+  } catch (error: any) {
+    if (error.code === "ENOENT") return new Map();
+    throw error;
+  }
+}
+const registeredAccounts = loadRegisteredAccounts();
+const authAttempts = new Map<string, { count: number; resetsAt: number }>();
+function limitAuthAttempts(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const key = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const attempt = authAttempts.get(key);
+  if (!attempt || attempt.resetsAt <= now) authAttempts.set(key, { count: 1, resetsAt: now + 15 * 60000 });
+  else {
+    if (attempt.count >= 20) return res.status(429).json({ error: "Too many account requests. Please try again later." });
+    attempt.count++;
+  }
+  next();
+}
+function saveRegisteredAccounts() {
+  fs.mkdirSync(licenseDataDirectory, { recursive: true });
+  const temporaryPath = `${accountsPath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, JSON.stringify([...registeredAccounts.values()], null, 2), { mode: 0o600 });
+  fs.renameSync(temporaryPath, accountsPath);
+}
+function hashPassword(password: string, salt: string) {
+  return crypto.scryptSync(password, salt, 64).toString("hex");
+}
+function verifyPassword(password: string, account: RegisteredAccount) {
+  const candidate = Buffer.from(hashPassword(password, account.salt), "hex");
+  const expected = Buffer.from(account.passwordHash, "hex");
+  return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+const educatorSessions = new Map<string, { email: string; expiresAt: number }>();
+function issueSession(email: string) {
+  const token = crypto.randomBytes(32).toString("hex");
+  educatorSessions.set(crypto.createHash("sha256").update(token).digest("hex"), { email, expiresAt: Date.now() + 7 * 86400000 });
+  return token;
+}
+function getSessionByToken(token: string) {
+  if (!/^[a-f0-9]{64}$/.test(token)) return null;
+  const key = crypto.createHash("sha256").update(token).digest("hex");
+  const session = educatorSessions.get(key);
+  if (!session) return null;
+  if (session.expiresAt < Date.now()) { educatorSessions.delete(key); return null; }
+  return { key, ...session };
+}
+function getSession(req: express.Request) {
+  const token = /^Bearer ([a-f0-9]{64})$/.exec(req.header("Authorization") || "")?.[1];
+  return token ? getSessionByToken(token) : null;
+}
+function publicAccount(email: string) {
+  const registered = registeredAccounts.get(email);
+  if (registered) return { email, name: registered.name, accountType: "user" as const, maxDurationMinutes: LIMITED_SESSION_MINUTES };
+  const builtIn = educatorAccounts.get(email);
+  return builtIn ? { email, name: "", accountType: builtIn.accountType, maxDurationMinutes: builtIn.maxDurationMinutes } : null;
+}
+
 const superadminEmail = process.env.SUPERADMIN_EMAIL?.trim().toLowerCase();
 const superadminPassword = process.env.SUPERADMIN_PASSWORD;
 if (superadminEmail && superadminPassword) {
@@ -235,11 +311,13 @@ if (superadminEmail && superadminPassword) {
   });
 }
 
-educatorAccounts.set((process.env.TRIAL_EMAIL || "trial@ezoom.com").toLowerCase(), {
-    password: process.env.TRIAL_PASSWORD || "trial@123",
+if (process.env.TRIAL_EMAIL && process.env.TRIAL_PASSWORD) {
+  educatorAccounts.set(process.env.TRIAL_EMAIL.trim().toLowerCase(), {
+    password: process.env.TRIAL_PASSWORD,
     accountType: "trial",
-    maxDurationMinutes: Number(process.env.TRIAL_DURATION_MINUTES || 30),
-});
+    maxDurationMinutes: LIMITED_SESSION_MINUTES,
+  });
+}
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "EZoom" });
@@ -254,13 +332,59 @@ function generateJoinCode(): string {
   return code;
 }
 
-app.post("/api/educator/login", requireActiveLicense, (req, res) => {
+app.post("/api/educator/login", requireActiveLicense, limitAuthAttempts, (req, res) => {
   const email = String(req.body.email || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
   const account = educatorAccounts.get(email);
-  if (!account || account.password !== req.body.password) {
+  const registered = registeredAccounts.get(email);
+  if (!(account && account.password === password) && !(registered && verifyPassword(password, registered))) {
     return res.status(401).json({ error: "Invalid educator email or password." });
   }
-  res.json({ email, accountType: account.accountType, maxDurationMinutes: account.maxDurationMinutes });
+  res.json({ ...publicAccount(email), token: issueSession(email) });
+});
+
+app.post("/api/educator/register", requireActiveLicense, limitAuthAttempts, (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const name = String(req.body.name || "").trim();
+  const password = String(req.body.password || "");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || name.length < 2 || name.length > 100 || password.length < 12 || password.length > 128) {
+    return res.status(400).json({ error: "Use a valid email, a name of 2–100 characters, and a password of 12–128 characters." });
+  }
+  if (educatorAccounts.has(email) || registeredAccounts.has(email)) return res.status(409).json({ error: "An account with this email already exists." });
+  const salt = crypto.randomBytes(16).toString("hex");
+  registeredAccounts.set(email, { email, name, salt, passwordHash: hashPassword(password, salt), createdAt: new Date().toISOString() });
+  try { saveRegisteredAccounts(); } catch {
+    registeredAccounts.delete(email);
+    return res.status(500).json({ error: "Could not save the account. Please try again." });
+  }
+  res.status(201).json({ ...publicAccount(email), token: issueSession(email) });
+});
+
+app.get("/api/educator/me", requireActiveLicense, (req, res) => {
+  const session = getSession(req);
+  const account = session && publicAccount(session.email);
+  if (!account) return res.status(401).json({ error: "Please sign in again." });
+  res.json(account);
+});
+
+app.post("/api/educator/logout", (req, res) => {
+  const session = getSession(req);
+  if (session) educatorSessions.delete(session.key);
+  res.status(204).end();
+});
+
+app.delete("/api/educator/account", requireActiveLicense, (req, res) => {
+  const session = getSession(req);
+  const account = session && registeredAccounts.get(session.email);
+  if (!account) return res.status(403).json({ error: "Only self-registered accounts can be deleted here." });
+  if (!verifyPassword(String(req.body.password || ""), account)) return res.status(401).json({ error: "Incorrect password." });
+  registeredAccounts.delete(session.email);
+  try { saveRegisteredAccounts(); } catch {
+    registeredAccounts.set(session.email, account);
+    return res.status(500).json({ error: "Could not delete the account. Please try again." });
+  }
+  for (const [key, value] of educatorSessions) if (value.email === session.email) educatorSessions.delete(key);
+  res.status(204).end();
 });
 
 // REST API Endpoints
@@ -272,9 +396,10 @@ app.post("/api/classrooms", requireActiveLicense, (req, res) => {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  const educatorEmail = String(email || "").trim().toLowerCase();
-  const account = educatorAccounts.get(educatorEmail);
-  if (!account || account.password !== password) {
+  const session = getSession(req);
+  const educatorEmail = session?.email || String(email || "").trim().toLowerCase();
+  const account = session ? publicAccount(educatorEmail) : null;
+  if (!account) {
     return res.status(403).json({ error: "Invalid educator account credentials." });
   }
 
@@ -515,10 +640,16 @@ wss.on("connection", (ws: WebSocket) => {
           ws.send(JSON.stringify({ type: "error", message: "Classroom not found" }));
           return;
         }
-        userSession = { userId, name, role, roomCode: code };
-
         // If user is the educator
         if (role === "EDUCATOR") {
+          const token = typeof message.token === "string" ? message.token : "";
+          const session = getSessionByToken(token);
+          if (!session || session.email !== room.educatorEmail) {
+            ws.send(JSON.stringify({ type: "error", message: "Educator sign-in required for this classroom." }));
+            ws.close();
+            return;
+          }
+          userSession = { userId, name, role, roomCode: code };
           room.educatorId = userId;
           room.educatorName = name;
           (room as any).educatorWs = ws;
@@ -533,7 +664,7 @@ wss.on("connection", (ws: WebSocket) => {
               room.endedAt = new Date().toISOString();
               broadcastToRoom(room, {
                 type: "session-ended",
-                reason: "The 30-minute trial meeting limit has been reached.",
+                reason: `The ${room.maxDurationMinutes}-minute meeting limit has been reached.`,
               });
             }, room.maxDurationMinutes * 60 * 1000);
           }
@@ -588,6 +719,7 @@ wss.on("connection", (ws: WebSocket) => {
         } 
         // If student joins
         else {
+          userSession = { userId, name, role: "STUDENT", roomCode: code };
           // If locked
           if (room.isLocked) {
             ws.send(JSON.stringify({ type: "error", message: "Classroom is locked" }));
@@ -1513,22 +1645,6 @@ function findEducatorWS(room: RoomState): WebSocket | null {
   // Let's modify our 'join' handler to record room.educatorWs = ws! Yes, let's do that!
   return (room as any).educatorWs || null;
 }
-
-// Enhance wss connection logic to set educatorWs in room state
-wss.on("connection", (ws: WebSocket) => {
-  ws.on("message", (messageStr: string) => {
-    try {
-      const message = JSON.parse(messageStr);
-      if (message.type === "join" && message.role === "EDUCATOR") {
-        const room = rooms.get(message.roomCode.toUpperCase());
-        if (room) {
-          (room as any).educatorWs = ws;
-        }
-      }
-    } catch {}
-  });
-});
-
 
 // Serve Static Assets & SPA Fallback (Express + Vite Setup)
 async function startServer() {

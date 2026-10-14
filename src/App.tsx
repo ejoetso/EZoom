@@ -47,6 +47,7 @@ import PollsManager from "./components/PollsManager";
 import MicTestModal from "./components/MicTestModal";
 import CameraPipOverlay from "./components/CameraPipOverlay";
 import AIAssistant from "./components/AIAssistant";
+import { apiBase, apiUrl, hasNativeApi, isNative, websocketUrl } from "./api";
 
 // Unique ID Generator
 function generateId(): string {
@@ -113,18 +114,31 @@ export default function App() {
   const [broadcastingPassword, setBroadcastingPassword] = useState("");
   const [educatorEmail, setEducatorEmail] = useState("");
   const [educatorAuthenticated, setEducatorAuthenticated] = useState(false);
-  const [educatorAccountType, setEducatorAccountType] = useState<"superadmin" | "trial" | null>(null);
+  const [educatorAccountType, setEducatorAccountType] = useState<"superadmin" | "trial" | "user" | null>(null);
+  const [educatorToken, setEducatorToken] = useState(() => sessionStorage.getItem("ezoom_educator_token") || "");
+  const [educatorAuthMode, setEducatorAuthMode] = useState<"login" | "register">("login");
+  const [registrationName, setRegistrationName] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [accountActionBusy, setAccountActionBusy] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
-  const [joinBaseUrl, setJoinBaseUrl] = useState(() => window.location.origin);
+  const [joinBaseUrl, setJoinBaseUrl] = useState(() => apiBase);
   const [licenseStatus, setLicenseStatus] = useState<{ active: boolean; status: string; expiresAt?: string; daysRemaining?: number; trialDays?: number } | null>(null);
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseError, setLicenseError] = useState<string | null>(null);
   const [isActivatingLicense, setIsActivatingLicense] = useState(false);
 
   const loadLicenseStatus = useCallback(async () => {
+    if (!hasNativeApi) {
+      setLicenseStatus({ active: false, status: "unavailable" });
+      return;
+    }
     try {
-      const response = await fetch("/api/license/status");
-      setLicenseStatus(await response.json());
+      const response = await fetch(apiUrl("/api/license/status"));
+      if (!response.ok) throw new Error("EZoom server unavailable");
+      const status = await response.json();
+      if (typeof status.active !== "boolean") throw new Error("Invalid EZoom server response");
+      setLicenseStatus(status);
     } catch {
       setLicenseStatus({ active: false, status: "unavailable" });
     }
@@ -137,7 +151,7 @@ export default function App() {
     setLicenseError(null);
     setIsActivatingLicense(true);
     try {
-      const response = await fetch("/api/license/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ licenseKey }) });
+      const response = await fetch(apiUrl("/api/license/activate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ licenseKey }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Licence activation failed.");
       setLicenseStatus(data);
@@ -151,9 +165,9 @@ export default function App() {
 
   useEffect(() => {
     const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
-    if (!isLocalHost) return;
+    if (!isLocalHost || isNative) return;
 
-    fetch("/api/network-info")
+    fetch(apiUrl("/api/network-info"))
       .then((response) => response.ok ? response.json() : null)
       .then((data) => {
         if (data?.joinBaseUrl) setJoinBaseUrl(data.joinBaseUrl);
@@ -564,22 +578,82 @@ export default function App() {
   const [handRaised, setHandRaised] = useState(false);
 
   // Initialize a classroom from Landing page (for Educators)
+  useEffect(() => {
+    if (!educatorToken) return;
+    fetch(apiUrl("/api/educator/me"), { headers: { Authorization: `Bearer ${educatorToken}` } })
+      .then(async (response) => { if (!response.ok) throw new Error(); return response.json(); })
+      .then((data) => {
+        setEducatorEmail(data.email);
+        setEducatorAccountType(data.accountType);
+        setEducatorAuthenticated(true);
+        if (data.name) setUserName(data.name);
+      })
+      .catch(() => { sessionStorage.removeItem("ezoom_educator_token"); setEducatorToken(""); });
+  }, []);
+
   const handleEducatorLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setEducatorError(null);
+    if (educatorAuthMode === "register" && broadcastingPassword !== confirmPassword) {
+      setEducatorError("Passwords do not match.");
+      return;
+    }
+    setAccountActionBusy(true);
     try {
-      const response = await fetch("/api/educator/login", {
+      const response = await fetch(apiUrl(educatorAuthMode === "register" ? "/api/educator/register" : "/api/educator/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: educatorEmail, password: broadcastingPassword }),
+        body: JSON.stringify({ email: educatorEmail, password: broadcastingPassword, name: registrationName }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Educator login failed.");
+      if (!response.ok) throw new Error(data.error || "Account request failed.");
       setEducatorEmail(data.email);
       setEducatorAccountType(data.accountType);
+      setEducatorToken(data.token);
+      sessionStorage.setItem("ezoom_educator_token", data.token);
+      if (data.name) setUserName(data.name);
+      setBroadcastingPassword("");
+      setConfirmPassword("");
       setEducatorAuthenticated(true);
     } catch (err: any) {
-      setEducatorError(err.message || "Educator login failed.");
+      setEducatorError(err.message || "Account request failed.");
+    } finally {
+      setAccountActionBusy(false);
+    }
+  };
+
+  const signOutEducator = async () => {
+    if (educatorToken) await fetch(apiUrl("/api/educator/logout"), { method: "POST", headers: { Authorization: `Bearer ${educatorToken}` } }).catch(() => {});
+    sessionStorage.removeItem("ezoom_educator_token");
+    setEducatorToken("");
+    setEducatorAuthenticated(false);
+    setEducatorAccountType(null);
+    setBroadcastingPassword("");
+    setShowDeleteAccount(false);
+  };
+
+  const deleteEducatorAccount = async () => {
+    setEducatorError(null);
+    setAccountActionBusy(true);
+    try {
+      const response = await fetch(apiUrl("/api/educator/account"), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${educatorToken}` },
+        body: JSON.stringify({ password: broadcastingPassword }),
+      });
+      if (!response.ok) throw new Error((await response.json()).error || "Account deletion failed.");
+      sessionStorage.removeItem("ezoom_educator_token");
+      setEducatorToken("");
+      setEducatorAuthenticated(false);
+      setEducatorAccountType(null);
+      setEducatorEmail("");
+      setBroadcastingPassword("");
+      setShowDeleteAccount(false);
+      setEducatorAuthMode("login");
+    } catch (err: any) {
+      setEducatorError(err.message || "Account deletion failed.");
+    } finally {
+      setAccountActionBusy(false);
     }
   };
 
@@ -594,9 +668,9 @@ export default function App() {
 
     setEducatorError(null);
     try {
-      const response = await fetch("/api/classrooms", {
+      const response = await fetch(apiUrl("/api/classrooms"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${educatorToken}` },
         body: JSON.stringify({
           title: classroomTitle,
           courseName,
@@ -605,7 +679,6 @@ export default function App() {
           waitingRoom: waitingRoomEnabled,
           chatEnabled,
           recording: recordingEnabled,
-          password: broadcastingPassword,
         }),
       });
 
@@ -653,7 +726,7 @@ export default function App() {
 
     setErrorText(null);
     try {
-      const response = await fetch(`/api/classrooms/${normalizedRoomCode}`);
+      const response = await fetch(apiUrl(`/api/classrooms/${normalizedRoomCode}`));
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || "Classroom code is invalid or expired.");
@@ -688,8 +761,7 @@ export default function App() {
       void unlockAudioContext();
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const wsUrl = websocketUrl("/ws");
     const socket = new WebSocket(wsUrl);
     setWs(socket);
     wsRef.current = socket;
@@ -703,6 +775,7 @@ export default function App() {
         name: userName,
         email: role === "STUDENT" ? studentEmail : undefined,
         role,
+        token: role === "EDUCATOR" ? educatorToken : undefined,
         roomCode: roomCode.toUpperCase(),
       }));
     });
@@ -1614,6 +1687,19 @@ export default function App() {
     return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white"><RefreshCw className="w-7 h-7 animate-spin text-cyan-400" /></div>;
   }
 
+  if (licenseStatus.status === "unavailable") {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-8 text-center shadow-2xl">
+          <img src="/ezoom-logo.png" alt="EZoom" className="mx-auto mb-7 h-24 w-auto object-contain" />
+          <h1 className="text-2xl font-black">EZoom service unavailable</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-400">{hasNativeApi ? "Please check your connection and try again. If the problem continues, contact EZoom support." : "This app build has no EZoom service configured. Please install an updated build."}</p>
+          <button onClick={loadLicenseStatus} className="mt-6 rounded-xl bg-cyan-600 px-5 py-3 font-bold hover:bg-cyan-500">Try again</button>
+        </div>
+      </div>
+    );
+  }
+
   if (!licenseStatus.active) {
     const isExpired = licenseStatus.status === "expired";
     return (
@@ -1736,8 +1822,21 @@ export default function App() {
 
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800 flex items-center justify-between">
                   <span>{educatorEmail}</span>
-                  <span className="font-bold uppercase">{educatorAccountType === "trial" ? "30-minute trial" : "Superadmin"}</span>
+                  <span className="font-bold uppercase">{educatorAccountType === "superadmin" ? "Superadmin" : "60-minute sessions"}</span>
                 </div>
+                <div className="flex items-center gap-4 text-xs">
+                  <button type="button" onClick={signOutEducator} className="text-slate-600 underline">Sign out</button>
+                  {educatorAccountType === "user" && <button type="button" onClick={() => { setShowDeleteAccount(!showDeleteAccount); setEducatorError(null); }} className="text-red-700 underline">Delete account</button>}
+                </div>
+                {showDeleteAccount && educatorAccountType === "user" && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
+                    <p className="text-xs text-red-900">Permanently delete your EZoom account. This cannot be undone. Enter your password to confirm.</p>
+                    <div className="space-y-3">
+                      <input type="password" autoComplete="current-password" value={broadcastingPassword} onChange={(e) => setBroadcastingPassword(e.target.value)} placeholder="Your password" aria-label="Password to confirm account deletion" className="w-full px-4 py-3 border border-red-200 rounded-xl text-xs" required />
+                      <button type="button" onClick={deleteEducatorAccount} disabled={accountActionBusy || !broadcastingPassword} className="bg-red-700 text-white px-4 py-2 rounded-xl text-xs disabled:opacity-50">Permanently delete account</button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Feature Toggles */}
                 <div className="space-y-2 pt-2 border-t border-slate-100">
@@ -1776,18 +1875,31 @@ export default function App() {
                     <AlertCircle className="w-4 h-4 shrink-0" /> <span>{educatorError}</span>
                   </div>
                 )}
+                <div className="flex gap-2" role="tablist" aria-label="Educator account">
+                  <button type="button" role="tab" aria-selected={educatorAuthMode === "login"} onClick={() => { setEducatorAuthMode("login"); setEducatorError(null); }} className={`rounded-xl px-4 py-2 text-xs ${educatorAuthMode === "login" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}>Sign in</button>
+                  <button type="button" role="tab" aria-selected={educatorAuthMode === "register"} onClick={() => { setEducatorAuthMode("register"); setEducatorError(null); }} className={`rounded-xl px-4 py-2 text-xs ${educatorAuthMode === "register" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}>Create account</button>
+                </div>
+                {educatorAuthMode === "register" && <div className="space-y-1">
+                  <label className="text-[11px] font-medium text-slate-600">Your name</label>
+                  <input type="text" autoComplete="name" value={registrationName} onChange={(e) => setRegistrationName(e.target.value)} minLength={2} maxLength={100} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs" required />
+                </div>}
                 <div className="space-y-1">
                   <label className="text-[11px] font-medium text-slate-600">Educator Email</label>
-                  <input type="email" name="educator_login_email" autoComplete="off" placeholder="educator@example.com" value={educatorEmail} onChange={(e) => setEducatorEmail(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-slate-900" required />
+                  <input type="email" name="educator_login_email" autoComplete="email" placeholder="educator@example.com" value={educatorEmail} onChange={(e) => setEducatorEmail(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-slate-900" required />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[11px] font-medium text-slate-600">Password</label>
-                  <input type="password" name="educator_login_password" autoComplete="new-password" placeholder="Enter educator password" value={broadcastingPassword} onChange={(e) => setBroadcastingPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-slate-900" required />
+                  <input type="password" name="educator_login_password" autoComplete={educatorAuthMode === "register" ? "new-password" : "current-password"} minLength={educatorAuthMode === "register" ? 12 : undefined} placeholder={educatorAuthMode === "register" ? "At least 12 characters" : "Enter educator password"} value={broadcastingPassword} onChange={(e) => setBroadcastingPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-slate-900" required />
                 </div>
-                <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3.5 rounded-xl text-xs font-semibold shadow-md flex items-center justify-center gap-2">
-                  <Lock className="w-4 h-4" /> Sign In as Educator
+                {educatorAuthMode === "register" && <div className="space-y-1">
+                  <label className="text-[11px] font-medium text-slate-600">Confirm password</label>
+                  <input type="password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs" required />
+                </div>}
+                <button type="submit" disabled={accountActionBusy} className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3.5 rounded-xl text-xs font-semibold shadow-md flex items-center justify-center gap-2 disabled:opacity-50">
+                  <Lock className="w-4 h-4" /> {educatorAuthMode === "register" ? "Create educator account" : "Sign in as educator"}
                 </button>
-                <p className="text-[10px] text-slate-400 text-center">Trial meetings are limited to 30 minutes.</p>
+                <p className="text-[10px] text-slate-400 text-center">New accounts can host sessions of up to 60 minutes. No social sign-in is required.</p>
+                <p className="text-[10px] text-slate-500 text-center">By creating an account, you acknowledge the <a href="/privacy.html" target="_blank" rel="noreferrer" className="underline text-emerald-700">privacy notice</a>. Account deletion is available after sign-in.</p>
               </form>
               )}
             </div>
@@ -1903,7 +2015,7 @@ export default function App() {
               <span className="inline-flex rounded-full bg-cyan-50 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-700">Product Demo</span>
               <h2 id="demo-heading" className="text-3xl font-bold text-slate-900">See EZoom in Action</h2>
               <p className="mx-auto max-w-2xl text-sm leading-relaxed text-slate-500">
-                Watch the guided walkthrough, preview the educator and student experience, then try a free 30-minute meeting.
+                Watch the guided walkthrough, preview the educator and student experience, then try a free 60-minute meeting.
               </p>
             </div>
 
@@ -1935,9 +2047,9 @@ export default function App() {
 
             <div className="flex flex-col items-center justify-between gap-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-6 text-center sm:flex-row sm:text-left">
               <div>
-                <h3 className="font-bold text-emerald-950">Free 30-minute educator trial</h3>
+                <h3 className="font-bold text-emerald-950">Try a 60-minute educator session</h3>
                 <p className="mt-1 text-xs text-emerald-800">
-                  Sign in with <span className="font-mono font-bold">trial@ezoom.com</span> and password <span className="font-mono font-bold">trial@123</span>
+                  Create a free educator account above to host a session. An installation trial licence may be required for self-hosted deployments.
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2">

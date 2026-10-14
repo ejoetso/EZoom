@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Sparkles, FileText, CheckCircle2, AlertCircle, RefreshCw, Loader2 } from "lucide-react";
+import { apiUrl } from "../api";
 
 interface AIAssistantProps {
   roomCode: string;
@@ -37,7 +38,7 @@ export default function AIAssistant({ roomCode, chatMessages, whiteboardActions 
     try {
       // Fetch Summary from server proxy (to keep API keys safe!)
       setLoadingPhase("Formulating lesson summary with Gemini 3.5...");
-      const summaryRes = await fetch("/api/gemini/summarize", {
+      const summaryRes = await fetch(apiUrl("/api/gemini/summarize"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -57,7 +58,7 @@ export default function AIAssistant({ roomCode, chatMessages, whiteboardActions 
 
       // Phase 3: Fetch Interactive Quiz
       setLoadingPhase("Creating interactive review questions with Gemini...");
-      const quizRes = await fetch("/api/gemini/quiz", {
+      const quizRes = await fetch(apiUrl("/api/gemini/quiz"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
