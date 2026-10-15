@@ -76,3 +76,104 @@
   background: rgba(15, 23, 42, 0.24);
 }
 
+/* iPhone app shell. The browser and Android layouts remain unchanged. */
+.ios-app {
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ios-app :is(button, a, input, textarea, select) { touch-action: manipulation; }
+.ios-app :is(input, textarea, select) { font-size: 16px; }
+.ios-app button:focus-visible, .ios-app a:focus-visible, .ios-app input:focus-visible {
+  outline: 2px solid #059669;
+  outline-offset: 2px;
+}
+
+.ios-portal-switch, .ios-classroom-tabs { display: none; }
+
+@media (max-width: 767px) {
+  .ios-app .ios-panel-hidden { display: none !important; }
+  .ios-app .ios-landing {
+    min-height: auto;
+    padding: 18px 16px 32px;
+    justify-content: flex-start;
+  }
+  .ios-app .ios-hero { width: 100%; margin-bottom: 18px; }
+  .ios-app .ios-hero > div:first-child { height: 96px; }
+  .ios-app .ios-hero img { width: min(580px, 145vw); }
+  .ios-app .ios-hero p { display: none; }
+  .ios-app .ios-portal-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    width: 100%;
+    padding: 4px;
+    margin-bottom: 16px;
+    border-radius: 16px;
+    background: #e2e8f0;
+  }
+  .ios-app .ios-portal-switch button {
+    min-height: 44px;
+    border-radius: 12px;
+    color: #475569;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .ios-app .ios-portal-switch button[aria-selected="true"] {
+    background: white;
+    color: #064e3b;
+    box-shadow: 0 1px 5px #0f172a1a;
+  }
+  .ios-app .ios-portal-card { padding: 22px 18px; gap: 14px; box-shadow: 0 6px 20px #0f172a0d; }
+  .ios-app .ios-portal-card h2 { font-size: 21px; }
+  .ios-app .ios-portal-card form { padding-top: 0; }
+  .ios-app .ios-portal-card :is(button[type="submit"], button[type="button"]) { min-height: 44px; }
+  .ios-app .ios-classroom { padding: 12px 12px 88px; }
+  .ios-app .ios-classroom-header { align-items: stretch; gap: 10px; padding: 12px; }
+  .ios-app .ios-classroom-header > div { flex-wrap: wrap; justify-content: space-between; }
+  .ios-app .ios-classroom-header > div:first-child { align-items: center; }
+  .ios-app .ios-classroom-header > div:first-child h1 { max-width: 72vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ios-app .ios-classroom-header button { min-height: 40px; }
+  .ios-app .ios-classroom-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    position: fixed;
+    z-index: 45;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+    background: #fff;
+    border-top: 1px solid #e2e8f0;
+    box-shadow: 0 -4px 20px #0f172a12;
+  }
+  .ios-app .ios-classroom-tabs button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 48px;
+    border-radius: 12px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .ios-app .ios-classroom-tabs button[aria-current="page"] { background: #ecfdf5; color: #047857; }
+  .ios-app .ios-classroom .lg\:col-span-3 { min-width: 0; }
+  .ios-app .ios-classroom .lg\:col-span-3 > div:first-child > div:first-child { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .ios-app .ios-classroom .lg\:col-span-3 > div:first-child > div:first-child button { padding: 8px; min-height: 44px; font-size: 11px; }
+  .ios-app .ios-classroom .lg\:col-span-3 > div:first-child > div:first-child button svg { flex-shrink: 0; }
+  .ios-app .ios-classroom .lg\:col-span-3 > div:nth-child(2) { min-height: 220px; aspect-ratio: auto; }
+  .ios-app .ios-classroom .lg\:col-span-3 > div:nth-child(3) { gap: 10px; padding: 12px; }
+  .ios-app .ios-classroom .lg\:col-span-3 > div:nth-child(3) > div:first-child { width: 100%; flex-wrap: wrap; }
+  .ios-app .ios-classroom .lg\:col-span-3 > div:nth-child(3) button { min-height: 44px; }
+  .ios-app .fixed.bottom-6.right-6 { bottom: calc(75px + env(safe-area-inset-bottom)); right: 12px; }
+  .ios-app .fixed.bottom-6.right-6 > div { width: min(220px, 55vw); }
+  .ios-app .fixed.bottom-6.right-6 button { min-height: 40px; }
+  .ios-app .fixed.top-6.right-6 { top: calc(12px + env(safe-area-inset-top)); right: 12px; left: 12px; }
+}
+

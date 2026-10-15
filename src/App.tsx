@@ -57,6 +57,8 @@ function generateId(): string {
 export default function App() {
   // Navigation & Screen Control
   const [currentScreen, setCurrentScreen] = useState<"landing" | "lobby" | "classroom" | "post-report">("landing");
+  const [iosPortal, setIosPortal] = useState<"join" | "host">("join");
+  const [iosClassroomPanel, setIosClassroomPanel] = useState<"stage" | "people" | "chat" | "polls">("stage");
   const [role, setRole] = useState<"EDUCATOR" | "STUDENT">("EDUCATOR");
   
   // App Core State
@@ -1789,7 +1791,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+    <div className={`min-h-screen bg-slate-50 font-sans text-slate-800 ${isIosRelease ? "ios-app" : ""}`}>
       
       {/* Floating Emojis Reaction Layer */}
       <div className="fixed bottom-12 right-12 z-50 pointer-events-none w-72 h-[450px] overflow-hidden flex justify-center">
@@ -1806,9 +1808,9 @@ export default function App() {
 
       {/* 1. Landing Screen */}
       {currentScreen === "landing" && (
-        <div className="max-w-5xl mx-auto px-4 py-12 flex flex-col items-center justify-center min-h-[90vh]">
+        <div className="ios-landing max-w-5xl mx-auto px-4 py-12 flex flex-col items-center justify-center min-h-[90vh]">
           
-          <div className="text-center space-y-3.5 mb-10 max-w-2xl">
+          <div className="ios-hero text-center space-y-3.5 mb-10 max-w-2xl">
             <div className="relative h-32 w-full overflow-hidden" aria-hidden="true">
               <img
                 src="/ezoom-logo.png"
@@ -1825,10 +1827,14 @@ export default function App() {
             </p>
           </div>
 
+          {isIosRelease && <div className="ios-portal-switch" role="tablist" aria-label="EZoom portal">
+            <button type="button" role="tab" aria-selected={iosPortal === "join"} onClick={() => setIosPortal("join")}>Join a class</button>
+            <button type="button" role="tab" aria-selected={iosPortal === "host"} onClick={() => setIosPortal("host")}>Host a class</button>
+          </div>}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
             
             {/* Educator Creation Column */}
-            <div className="order-2 bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between">
+            <div className={`ios-portal-card order-2 bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between ${isIosRelease && iosPortal !== "host" ? "ios-panel-hidden" : ""}`}>
               <div className="space-y-4">
                 <span className="bg-emerald-50 text-emerald-800 text-[10px] font-mono px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">
                   Educator Portal
@@ -1974,7 +1980,7 @@ export default function App() {
             </div>
 
             {/* Student Joining Column */}
-            <div className="order-1 bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between">
+            <div className={`ios-portal-card order-1 bg-white border border-slate-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all space-y-6 flex flex-col justify-between ${isIosRelease && iosPortal !== "join" ? "ios-panel-hidden" : ""}`}>
               <div className="space-y-4">
                 <span className="bg-slate-100 text-slate-800 text-[10px] font-mono px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">
                   Student Portal
@@ -2079,7 +2085,7 @@ export default function App() {
 
           </div>
 
-          <section className="w-full mt-14 space-y-8" aria-labelledby="demo-heading">
+          {!isIosRelease && <section className="w-full mt-14 space-y-8" aria-labelledby="demo-heading">
             <div className="text-center space-y-2">
               <span className="inline-flex rounded-full bg-cyan-50 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-700">Product Demo</span>
               <h2 id="demo-heading" className="text-3xl font-bold text-slate-900">See EZoom in Action</h2>
@@ -2126,7 +2132,7 @@ export default function App() {
                 <a href="https://github.com/ejoetso/EZoom/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noreferrer" className="rounded-xl border border-emerald-300 bg-white px-4 py-2.5 text-xs font-bold text-emerald-800 transition-colors hover:bg-emerald-100">Open User Guide</a>
               </div>
             </div>
-          </section>
+          </section>}
 
         </div>
       )}
@@ -2183,7 +2189,12 @@ export default function App() {
 
       {/* 4. Live Classroom Dashboard Workspace */}
       {currentScreen === "classroom" && (
-        <div className="p-4 md:p-6 space-y-5">
+        <div className="ios-classroom p-4 md:p-6 space-y-5">
+          {isIosRelease && <nav className="ios-classroom-tabs" aria-label="Classroom sections">
+            {([ ["stage", "Stage", Monitor], ["people", "People", Users], ["chat", "Chat", MessageSquare], ["polls", "Polls", HelpCircle] ] as const).map(([key, label, Icon]) => (
+              <button key={key} type="button" aria-current={iosClassroomPanel === key ? "page" : undefined} onClick={() => setIosClassroomPanel(key)}><Icon size={20} aria-hidden="true" /><span>{label}</span></button>
+            ))}
+          </nav>}
           
           {/* Connection status and Auto Reconnect notifications */}
           {connectionStatus !== "connected" && (
@@ -2222,7 +2233,7 @@ export default function App() {
           )}
 
           {/* Top Panel Navigation Bar */}
-          <div className="bg-slate-900 text-white p-4 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-md border border-slate-800">
+          <div className="ios-classroom-header bg-slate-900 text-white p-4 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-md border border-slate-800">
             <div className="flex items-center gap-3">
               <div className="bg-emerald-500 text-slate-950 w-9 h-9 rounded-xl flex items-center justify-center shadow-inner">
                 <BookOpen className="w-5 h-5" />
@@ -2381,7 +2392,7 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             
             {/* Left/Center Stage: Core Media & Whiteboard Workspace */}
-            <div className="lg:col-span-3 space-y-4">
+            <div className={`lg:col-span-3 space-y-4 ${isIosRelease && iosClassroomPanel !== "stage" ? "ios-panel-hidden" : ""}`}>
               
               {/* Media Switcher Headers */}
               <div className="flex justify-between items-center flex-wrap gap-2 w-full">
@@ -2688,33 +2699,33 @@ export default function App() {
             </div>
 
             {/* Right Stage: Workspace Panels Sidebars (Rosters, Chats, Polls) */}
-            <div className="space-y-6">
+            <div className={`space-y-6 ${isIosRelease && iosClassroomPanel === "stage" ? "ios-panel-hidden" : ""}`}>
               
               {/* Waiting list approvals & Rosters */}
-              <WaitingRoomAndParticipants
+              <div className={isIosRelease && iosClassroomPanel !== "people" ? "ios-panel-hidden" : ""}><WaitingRoomAndParticipants
                 ws={ws}
                 role={role}
                 participants={participants}
                 waitingRoom={waitingRoom}
-              />
+              /></div>
 
               {/* Chat & Q&A Board */}
-              <ChatAndQA
+              <div className={isIosRelease && iosClassroomPanel !== "chat" ? "ios-panel-hidden" : ""}><ChatAndQA
                 ws={ws}
                 role={role}
                 userId={userId}
                 chatMessages={chatMessages}
                 questions={questions}
                 chatEnabled={chatEnabled}
-              />
+              /></div>
 
               {/* Interactive Polls Manager */}
-              <PollsManager
+              <div className={isIosRelease && iosClassroomPanel !== "polls" ? "ios-panel-hidden" : ""}><PollsManager
                 ws={ws}
                 role={role}
                 userId={userId}
                 polls={polls}
-              />
+              /></div>
 
             </div>
 
