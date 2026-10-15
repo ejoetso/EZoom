@@ -27,7 +27,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>EZoom uses the camera so educators can broadcast video during a classroom session.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>EZoom uses the microphone so educators can broadcast live voice during a classroom session.</string>
+	<string>EZoom uses the microphone so educators and students can speak during a classroom session.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -91,6 +91,13 @@ export default function App() {
 
   const studentAudioContextRef = useRef<AudioContext | null>(null);
   const studentAudioNextTimeRef = useRef<number>(0);
+  const speakerAudioNextTimeRef = useRef<Record<string, number>>({});
+  const studentMicStreamRef = useRef<MediaStream | null>(null);
+  const studentMicContextRef = useRef<AudioContext | null>(null);
+  const studentMicProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const studentMicActiveRef = useRef(false);
+  const [studentMicActive, setStudentMicActive] = useState(false);
+  const [activeStudentSpeakers, setActiveStudentSpeakers] = useState<string[]>([]);
 
   // Educator Computer Class Recording State
   const [isRecordingClass, setIsRecordingClass] = useState(false);
@@ -322,6 +329,100 @@ export default function App() {
     }
   };
 
+  const stopStudentVoice = () => {
+    studentMicActiveRef.current = false;
+    studentMicProcessorRef.current?.disconnect();
+    studentMicProcessorRef.current = null;
+    studentMicStreamRef.current?.getTracks().forEach((track) => track.stop());
+    studentMicStreamRef.current = null;
+    if (studentMicContextRef.current && studentMicContextRef.current.state !== "closed") {
+      void studentMicContextRef.current?.close().catch(() => {});
+    }
+    studentMicContextRef.current = null;
+    setStudentMicActive(false);
+    setMicMuted(true);
+    const socket = wsRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "student-voice-state", active: false }));
+    }
+  };
+
+  const startStudentVoice = async () => {
+    if (studentMicActiveRef.current || role !== "STUDENT") return;
+    const socket = wsRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      studentMicStreamRef.current = stream;
+      if (socket.readyState !== WebSocket.OPEN) {
+        stream.getTracks().forEach((track) => track.stop());
+        studentMicStreamRef.current = null;
+        return;
+      }
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      studentMicContextRef.current = ctx;
+      await ctx.resume();
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
+      const silentOutput = ctx.createGain();
+      silentOutput.gain.value = 0;
+      processor.onaudioprocess = (event) => {
+        const activeSocket = wsRef.current;
+        if (!studentMicActiveRef.current || activeSocket?.readyState !== WebSocket.OPEN || activeSocket.bufferedAmount > 256 * 1024) return;
+        const input = event.inputBuffer.getChannelData(0);
+        const pcm = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          const sample = Math.max(-1, Math.min(1, input[i]));
+          pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        }
+        const bytes = new Uint8Array(pcm.buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        activeSocket.send(JSON.stringify({ type: "student-voice-chunk", pcm: btoa(binary), sampleRate: ctx.sampleRate }));
+      };
+      source.connect(processor);
+      processor.connect(silentOutput);
+      silentOutput.connect(ctx.destination);
+      studentMicProcessorRef.current = processor;
+      studentMicActiveRef.current = true;
+      setStudentMicActive(true);
+      setMicMuted(false);
+      socket.send(JSON.stringify({ type: "student-voice-state", active: true }));
+    } catch (error: any) {
+      stopStudentVoice();
+      showStreamToast(`Microphone unavailable: ${error?.message || "permission denied"}`);
+    }
+  };
+
+  const playVoiceChunk = async (pcm: string, sampleRate: number, speakerId: string) => {
+    try {
+      if (!Number.isFinite(sampleRate) || sampleRate < 8000 || sampleRate > 96000) return;
+      const binary = atob(pcm);
+      if (!binary.length || binary.length % 2 !== 0) return;
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const samples = new Int16Array(bytes.buffer);
+      const ctx = studentAudioContextRef.current;
+      if (!ctx || ctx.state !== "running") {
+        setAudioContextUnlocked(false);
+        return;
+      }
+      const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+      const output = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) output[i] = samples[i] / (samples[i] < 0 ? 0x8000 : 0x7fff);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      const next = speakerId === "educator" ? studentAudioNextTimeRef.current : speakerAudioNextTimeRef.current[speakerId] || 0;
+      const scheduled = Math.max(ctx.currentTime + 0.04, Math.min(next, ctx.currentTime + 0.4));
+      source.start(scheduled);
+      if (speakerId === "educator") studentAudioNextTimeRef.current = scheduled + buffer.duration;
+      else speakerAudioNextTimeRef.current[speakerId] = scheduled + buffer.duration;
+    } catch (error) {
+      console.error("Voice playback error:", error);
+    }
+  };
+
   useEffect(() => {
     if (currentScreen !== "classroom" || !meetingStartedAt) return;
     const updateMeetingTimer = () => {
@@ -356,6 +457,7 @@ export default function App() {
       }
 
       setIsHostLiveVoiceActive(false);
+      setMicMuted(true);
       const activeWs = wsRef.current || ws;
       if (activeWs && activeWs.readyState === WebSocket.OPEN) {
         activeWs.send(JSON.stringify({ type: "host-voice-state", active: false }));
@@ -413,6 +515,7 @@ export default function App() {
         silentGain.connect(audioCtx.destination);
 
         setIsHostLiveVoiceActive(true);
+        setMicMuted(false);
         const activeWs = wsRef.current || ws;
         if (activeWs && activeWs.readyState === WebSocket.OPEN) {
           activeWs.send(JSON.stringify({ type: "host-voice-state", active: true }));
@@ -420,6 +523,7 @@ export default function App() {
         showStreamToast("Host live microphone voice streaming active 🎙️");
       } catch (err: any) {
         console.error("Host live voice error:", err);
+        setMicMuted(true);
         showStreamToast("Failed to start host microphone live voice stream: " + (err.message || "Permission denied"));
       }
     }
@@ -817,14 +921,12 @@ export default function App() {
   }) => {
     lastLaunchSettingsRef.current = settings;
     hasIntentionallyLeftRef.current = false;
-    setMicMuted(!settings.micEnabled);
+    setMicMuted(role === "STUDENT" ? true : !settings.micEnabled);
     setScreenShareQuality(settings.qualityMode);
     setConnectionStatus("connecting");
 
-    // Student playback must be unlocked directly from this user gesture.
-    if (role === "STUDENT") {
-      void unlockAudioContext();
-    }
+    // Unlock playback from the join gesture for both directions of conversation.
+    void unlockAudioContext();
 
     const wsUrl = websocketUrl("/ws");
     const socket = new WebSocket(wsUrl);
@@ -899,6 +1001,10 @@ export default function App() {
               setRemoteHostVoiceActive(true);
               unlockAudioContext();
             }
+          }
+
+          if (role === "STUDENT" && lastLaunchSettingsRef.current?.micEnabled) {
+            void startStudentVoice();
           }
 
           if (data.screenSharing) {
@@ -1043,50 +1149,21 @@ export default function App() {
 
         else if (data.type === "host-voice-chunk") {
           setRemoteHostVoiceActive(true);
-          if (!isStudentMutedVoiceRef.current && data.pcm) {
-            try {
-              const binary = atob(data.pcm);
-              const bytes = new Uint8Array(binary.length);
-              for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i);
-              }
-              const int16 = new Int16Array(bytes.buffer);
-              const float32 = new Float32Array(int16.length);
-              for (let i = 0; i < int16.length; i++) {
-                float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7FFF);
-              }
+          if (!isStudentMutedVoiceRef.current && typeof data.pcm === "string") {
+            await playVoiceChunk(data.pcm, data.sampleRate, "educator");
+          }
+        }
 
-              let ctx = studentAudioContextRef.current;
-              if (!ctx || ctx.state === "closed") {
-                ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: data.sampleRate || 44100 });
-                studentAudioContextRef.current = ctx;
-              }
-              if (ctx.state === "suspended") {
-                await ctx.resume().catch(() => {});
-              }
-              if (ctx.state !== "running") {
-                setAudioContextUnlocked(false);
-                studentAudioNextTimeRef.current = 0;
-                return;
-              }
-              setAudioContextUnlocked(true);
+        else if (data.type === "student-voice-state") {
+          setActiveStudentSpeakers((current) => data.active
+            ? [...new Set([...current, data.senderId])]
+            : current.filter((id) => id !== data.senderId));
+          if (!data.active) delete speakerAudioNextTimeRef.current[data.senderId];
+        }
 
-              const buffer = ctx.createBuffer(1, float32.length, data.sampleRate || ctx.sampleRate);
-              buffer.getChannelData(0).set(float32);
-
-              const sourceNode = ctx.createBufferSource();
-              sourceNode.buffer = buffer;
-              sourceNode.connect(ctx.destination);
-
-              const currentTime = ctx.currentTime;
-              if (studentAudioNextTimeRef.current < currentTime) {
-                studentAudioNextTimeRef.current = currentTime + 0.04;
-              }
-              sourceNode.start(studentAudioNextTimeRef.current);
-              studentAudioNextTimeRef.current += buffer.duration;
-            } catch (e) {
-              console.error("PCM playback error:", e);
-            }
+        else if (data.type === "student-voice-chunk" && data.senderId !== userId) {
+          if (typeof data.pcm === "string") {
+            await playVoiceChunk(data.pcm, data.sampleRate, data.senderId);
           }
         }
 
@@ -1131,7 +1208,7 @@ export default function App() {
         }
 
         else if (data.type === "mute-state") {
-          setMicMuted(data.isMuted);
+          if (data.isMuted && role === "STUDENT") stopStudentVoice();
         }
 
         else if (data.type === "kicked") {
@@ -1240,6 +1317,8 @@ export default function App() {
     });
 
     socket.addEventListener("close", () => {
+      if (wsRef.current !== socket) return;
+      if (role === "STUDENT") stopStudentVoice();
       setConnectionStatus("disconnected");
       if (!hasIntentionallyLeftRef.current) {
         console.log("WebSocket connection dropped unexpectedly. Reconnecting...");
@@ -1579,6 +1658,7 @@ export default function App() {
   // End Classroom Session
   const handleEndClassroom = () => {
     hasIntentionallyLeftRef.current = true;
+    if (role === "STUDENT") stopStudentVoice();
 
     if (isRecordingClass) {
       stopClassRecording();
@@ -2194,6 +2274,10 @@ export default function App() {
             {([ ["stage", "Stage", Monitor], ["people", "People", Users], ["chat", "Chat", MessageSquare], ["polls", "Polls", HelpCircle] ] as const).map(([key, label, Icon]) => (
               <button key={key} type="button" aria-current={iosClassroomPanel === key ? "page" : undefined} onClick={() => setIosClassroomPanel(key)}><Icon size={20} aria-hidden="true" /><span>{label}</span></button>
             ))}
+            <button id="ios_voice_toggle" type="button" aria-label={micMuted ? "Turn microphone on" : "Mute microphone"} aria-pressed={!micMuted} onClick={role === "EDUCATOR" ? toggleHostLiveVoice : studentMicActive ? stopStudentVoice : startStudentVoice}>
+              {micMuted ? <MicOff size={20} aria-hidden="true" /> : <Mic size={20} aria-hidden="true" />}
+              <span>{micMuted ? "Mic Off" : "Mic On"}</span>
+            </button>
           </nav>}
           
           {/* Connection status and Auto Reconnect notifications */}
@@ -2342,6 +2426,12 @@ export default function App() {
                     )}
                   </button>
                 </>
+              )}
+
+              {role === "EDUCATOR" && activeStudentSpeakers.length > 0 && !audioContextUnlocked && (
+                <button onClick={unlockAudioContext} className="bg-amber-400 text-slate-950 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <Volume2 className="w-4 h-4" /> Tap to hear students
+                </button>
               )}
 
               {role === "STUDENT" && remoteHostVoiceActive && (
@@ -2615,7 +2705,8 @@ export default function App() {
                 <div className="flex gap-2">
                   <button
                     id="stage_mic_mute"
-                    onClick={() => setMicMuted(!micMuted)}
+                    onClick={role === "EDUCATOR" ? toggleHostLiveVoice : studentMicActive ? stopStudentVoice : startStudentVoice}
+                    aria-pressed={role === "EDUCATOR" ? isHostLiveVoiceActive : studentMicActive}
                     className={`p-3 rounded-xl border transition-all flex items-center gap-1.5 text-xs font-sans font-medium cursor-pointer ${
                       micMuted
                         ? "bg-red-50 border-red-200 text-red-600 hover:bg-red-100"
@@ -2623,7 +2714,7 @@ export default function App() {
                     }`}
                   >
                     {micMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                    {micMuted ? "Unmute Mic" : "Mute Mic"}
+                    {micMuted ? "Turn Mic On" : "Mute Mic"}
                   </button>
 
                   {role === "EDUCATOR" && (

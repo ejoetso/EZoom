@@ -139,7 +139,7 @@
   .ios-app .ios-classroom-header button { min-height: 40px; }
   .ios-app .ios-classroom-tabs {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     position: fixed;
     z-index: 45;
     bottom: 0;

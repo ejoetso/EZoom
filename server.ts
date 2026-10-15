@@ -699,6 +699,7 @@ Each object must have:
 const wss = new WebSocketServer({ noServer: true });
 
 wss.on("connection", (ws: WebSocket) => {
+  let lastStudentVoiceChunkAt = 0;
   let userSession: {
     userId: string;
     name: string;
@@ -839,7 +840,7 @@ wss.on("connection", (ws: WebSocket) => {
             name,
             email,
             role: "STUDENT",
-            isMuted: false,
+            isMuted: true,
             handRaised: false,
             status: "active" as const,
             joinedAt: new Date().toISOString(),
@@ -1118,6 +1119,52 @@ wss.on("connection", (ws: WebSocket) => {
         });
       }
 
+      // Only admitted students may send microphone audio. The server never stores it.
+      else if (type === "student-voice-state") {
+        if (!userSession || userSession.role !== "STUDENT") return;
+        const room = rooms.get(userSession.roomCode);
+        const student = room?.participants.get(userSession.userId);
+        if (!room || !student || student.ws !== ws) return;
+        student.isMuted = !Boolean(message.active);
+        broadcastToRoom(room, {
+          type: "student-voice-state",
+          senderId: userSession.userId,
+          active: !student.isMuted,
+        }, userSession.userId);
+        broadcastToRoom(room, {
+          type: "participants-update",
+          participants: Array.from(room.participants.values()).map(p => ({
+            id: p.id, name: p.name, role: p.role, isMuted: p.isMuted,
+            handRaised: p.handRaised, status: p.status,
+          })),
+        });
+      }
+
+      else if (type === "student-voice-chunk") {
+        if (!userSession || userSession.role !== "STUDENT") return;
+        const room = rooms.get(userSession.roomCode);
+        const student = room?.participants.get(userSession.userId);
+        if (!room || !student || student.ws !== ws || student.isMuted) return;
+        const rate = Number(message.sampleRate);
+        if (typeof message.pcm !== "string" || message.pcm.length < 4 || message.pcm.length > 12000 || message.pcm.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(message.pcm) || !Number.isFinite(rate) || rate < 8000 || rate > 96000) return;
+        const now = Date.now();
+        if (now - lastStudentVoiceChunkAt < 12) return;
+        lastStudentVoiceChunkAt = now;
+        const payload = JSON.stringify({
+          type: "student-voice-chunk",
+          senderId: userSession.userId,
+          pcm: message.pcm,
+          sampleRate: rate,
+        });
+        room.participants.forEach((participant) => {
+          if (participant.id !== userSession!.userId && participant.ws.readyState === WebSocket.OPEN && participant.ws.bufferedAmount < 256 * 1024) {
+            participant.ws.send(payload);
+          }
+        });
+        const educator = findEducatorWS(room);
+        if (educator?.readyState === WebSocket.OPEN && educator.bufferedAmount < 256 * 1024) educator.send(payload);
+      }
+
       // Clear Annotations
       else if (type === "annotations-clear") {
         if (!userSession || userSession.role !== "EDUCATOR") return;
@@ -1156,7 +1203,7 @@ wss.on("connection", (ws: WebSocket) => {
               name: student.name,
               email: student.email,
               role: "STUDENT" as const,
-              isMuted: false,
+              isMuted: true,
               handRaised: false,
               status: "active" as const,
               joinedAt: new Date().toISOString(),
@@ -1368,7 +1415,7 @@ wss.on("connection", (ws: WebSocket) => {
             id: studentId,
             name,
             role: "STUDENT" as const,
-            isMuted: false,
+            isMuted: true,
             handRaised: false,
             status: "active" as const,
             joinedAt: new Date().toISOString(),
@@ -1562,8 +1609,9 @@ wss.on("connection", (ws: WebSocket) => {
         const student = room.participants.get(targetId);
         if (student) {
           if (action === "mute") {
-            student.isMuted = !student.isMuted;
-            student.ws.send(JSON.stringify({ type: "mute-state", isMuted: student.isMuted }));
+            student.isMuted = true;
+            student.ws.send(JSON.stringify({ type: "mute-state", isMuted: true }));
+            broadcastToRoom(room, { type: "student-voice-state", senderId: student.id, active: false }, student.id);
             broadcastToRoom(room, {
               type: "participants-update",
               participants: Array.from(room.participants.values()).map(p => ({
@@ -1661,8 +1709,9 @@ wss.on("connection", (ws: WebSocket) => {
           broadcastToRoom(room, { type: "educator-left" });
         } else {
           // Remove from participants
-          if (room.participants.has(userId)) {
+          if (room.participants.get(userId)?.ws === ws) {
             room.participants.delete(userId);
+            broadcastToRoom(room, { type: "student-voice-state", senderId: userId, active: false }, userId);
             broadcastToRoom(room, {
               type: "participants-update",
               participants: Array.from(room.participants.values()).map(p => ({
@@ -1678,7 +1727,7 @@ wss.on("connection", (ws: WebSocket) => {
             });
           }
           // Remove from waiting room if there
-          if (room.waitingRoom.has(userId)) {
+          if (room.waitingRoom.get(userId)?.ws === ws) {
             room.waitingRoom.delete(userId);
             sendToEducator(room, {
               type: "waiting-list-update",

@@ -41,7 +41,7 @@ Confirm that the microphone meter responds and the camera preview is visible. Ch
 
 ## 5. Teach in the live classroom
 
-The header shows the meeting timer, participant activity, microphone stream, recording, and exit controls. The main workspace provides whiteboard, screen sharing, annotations, chat, Q&A, polls, resources, and AI learning tools. The educator camera can be turned off from its camera panel.
+The header shows the meeting timer, participant activity, microphone stream, recording, and exit controls. The main workspace provides whiteboard, screen sharing, annotations, chat, Q&A, polls, resources, and AI learning tools. The educator camera can be turned off from its camera panel. Turn on **Live Mic Stream** (or **Turn Mic On** in the stage toolbar) to speak to students. Admitted students can reply by turning on their microphones; their voice is heard by the educator and other participants. The roster's **Mute Student** control stops that student's transmission. Use headphones to reduce echo.
 
 ![Educator live classroom](screenshots/05-live-classroom.png)
 
@@ -53,7 +53,7 @@ Students enter their name, email address, four-digit session code, and the answe
 
 ## 7. Participate in class
 
-After joining or receiving waiting-room approval, students can see the educator camera and shared teaching content, listen to the live educator voice, use chat and Q&A, answer polls, and collaborate on the whiteboard. Browsers may require one click on **Tap to Enable Live Host Voice** before audio playback begins.
+After joining or receiving waiting-room approval, students can see the educator camera and shared teaching content, listen to the live educator voice, use chat and Q&A, answer polls, and collaborate on the whiteboard. Enable the microphone in the lobby or tap **Turn Mic On** in the classroom to speak to the educator and class. On iPhone, the bottom **Mic** control remains available from every classroom tab. Tap it again to mute. Allow microphone access when prompted. Browsers may require one click on **Tap to Enable Live Host Voice** before audio playback begins.
 
 ![Student live classroom](screenshots/07-student-classroom.png)
 

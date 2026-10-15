@@ -164,12 +164,13 @@ export default function WaitingRoomAndParticipants({ ws, role, participants, wai
                     <div className="flex gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
                       <button
                         onClick={() => handleModeration(p.id, "mute")}
+                        disabled={p.isMuted}
                         className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
                           p.isMuted
                             ? "bg-red-50 border-red-200 text-red-600"
                             : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
                         }`}
-                        title={p.isMuted ? "Unmute Student" : "Mute Student"}
+                        title={p.isMuted ? "Student microphone is muted" : "Mute Student"}
                       >
                         {p.isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
                       </button>
